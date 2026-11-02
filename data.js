@@ -124,7 +124,7 @@
       mode: 'local',
       watch(c, fn) {
         (listeners[c] = listeners[c] || []).push(fn);
-        setTimeout(() => emit(c), 0);
+        setTimeout(() => emit(c), 0);  // 示範模式沒有快取問題
         return () => { listeners[c] = listeners[c].filter(f => f !== fn); };
       },
       async get(c, id) { const o = read(c); return o[id] ? Object.assign({ id }, o[id]) : null; },
@@ -143,7 +143,7 @@
       mode: 'cloud',
       watch(c, fn) {
         return col(c).onSnapshot(
-          s => fn(s.docs.map(d => Object.assign({ id: d.id }, d.data()))),
+          s => fn(s.docs.map(d => Object.assign({ id: d.id }, d.data())), { fromCache: s.metadata.fromCache }),
           err => { console.error('Firestore', err); if (window.BBC.onError) window.BBC.onError(err); }
         );
       },
@@ -164,6 +164,7 @@
   }
 
   window.BBC = {
+    VERSION: '2026.11.03-3',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
     hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, ONLINE_STALE_MS,

@@ -325,8 +325,9 @@ function enter(d) {
   ONLINE = d.status === 'online' || d.status === 'busy';
   S = { tab: 'home', status: ONLINE ? 'searching' : 'offline', left: SECS, unread: 0 };
   $('auth').hidden = true;
-  unsubD = db.watch('drivers', list => {
+  unsubD = db.watch('drivers', (list, meta) => {
     if (!ME) return;
+    if (meta && meta.fromCache) return;   // 手機剛連上時會先收到本機暫存（可能是空的），只相信雲端回來的資料
     const me = list.find(x => x.id === ME.phone);
     if (!me) {
       // 即時資料有時會先送來不完整的清單；再向雲端確認一次，真的被刪除才登出
@@ -485,8 +486,8 @@ document.addEventListener('click', e => {
 // ---------- 啟動 ----------
 $('authLogo').innerHTML = LOGO;
 $('modeHint').textContent = BBC.mode === 'cloud'
-  ? '已連線到雲端：帳號由管理平台統一管理，換手機也能登入。'
-  : '示範模式：還沒設定 Firebase，資料只存在這個瀏覽器，只會和「同一個瀏覽器」打開的管理平台連動。';
+  ? '已連線到雲端：帳號由管理平台統一管理，換手機也能登入。（版本 ' + BBC.VERSION + '）'
+  : '示範模式：還沒設定 Firebase，資料只存在這個瀏覽器，只會和「同一個瀏覽器」打開的管理平台連動。（版本 ' + BBC.VERSION + '）';
 (async function start() {
   const phone = local.get('session', null);
   if (!phone) return showAuth();
