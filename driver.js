@@ -79,7 +79,7 @@ function presence(extra) {
 }
 function startHeartbeat() {
   clearInterval(beatT);
-  beatT = setInterval(() => { if (ME && ONLINE) presence(); }, HEARTBEAT_MS);
+  beatT = setInterval(() => { if (ME && ONLINE) presence(); retryPending(); }, HEARTBEAT_MS);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ME && ONLINE) presence(); });
 
@@ -193,18 +193,116 @@ const A = {
   complete() {
     if (!CUR) return;
     stopMeter(); closeChat();
-    const fare = BBC.finalFare(M.km, M.min);
-    CUR.finalFare = fare;
+    const rec = buildRecord(CUR, M.km, M.min);
+    Object.assign(CUR, rec);
     S.status = 'done';
-    db.set('rides', CUR.id, { status: 'done', finalFare: fare, meterFare: meterAmount(), finalKm: Math.round(M.km * 10) / 10, finalMin: Math.round(M.min), doneAt: Date.now() })
-      .then(() => presence({ status: ONLINE ? 'online' : 'offline', rideId: '' })).catch(fail);
+    saveLocalTrip(Object.assign({ id: CUR.id }, CUR));          // 先存一份在手機
+    uploadTrip(CUR.id, rec).then(() => presence({ status: ONLINE ? 'online' : 'offline', rideId: '' }));
     render();
   },
+  detail(id) { openTrip(id); },
   next() { CUR = null; S.status = ONLINE ? 'searching' : 'offline'; presence(); onRides(RIDES); },
   chat() { openChat(); },
   speed() { SPEED = SPEED === 1 ? 20 : 1; toast(SPEED === 1 ? '跳表恢復正常速度' : '示範快轉：跳表速度 ×20'); render(); }
 };
 const meterAmount = () => meterFare();
+
+// ---------- 行程完整紀錄 ----------
+let HF = 'today';   // 行程紀錄篩選：today | week | all
+function buildRecord(r, km, min) {
+  const R = BBC.RATE;
+  const meter = BBC.meterAmount(km, min);
+  const fare = BBC.finalFare(km, min);
+  const now = Date.now();
+  return {
+    status: 'done', doneAt: now,
+    startedAt: r.startedAt || now, acceptedAt: r.acceptedAt || r.startedAt || now,
+    finalKm: Math.round(km * 10) / 10, finalMin: Math.round(min * 10) / 10,
+    fareBase: R.base, fareKm: Math.round(km * R.perKm), fareTime: Math.round(min * R.perMin),
+    meterFare: meter, minFareTopUp: Math.max(0, fare - meter), finalFare: fare,
+    rate: { base: R.base, perKm: R.perKm, perMin: R.perMin, min: R.min },
+    driverName: ME.name, driverPhone: ME.phone, plate: ME.plate || '',
+    car: [ME.brand, ME.model].filter(Boolean).join(' '), carColor: ME.color || '', service: ME.service || ''
+  };
+}
+// 手機備份（每位司機最多保留 300 筆）
+const tripKey = () => 'trips_' + (ME ? ME.phone : '');
+function localTrips() { return ME ? local.get(tripKey(), []) : []; }
+function saveLocalTrip(t) {
+  const list = localTrips().filter(x => x.id !== t.id);
+  list.unshift(t); local.set(tripKey(), list.slice(0, 300));
+}
+const pendingKey = () => 'pending_' + (ME ? ME.phone : '');
+function markPending(id, rec, on) {
+  const p = local.get(pendingKey(), {});
+  if (on) p[id] = rec; else delete p[id];
+  local.set(pendingKey(), p);
+  const el = $('saveState'); if (el) el.textContent = saveStateText(id);
+}
+function saveStateText(id) {
+  return local.get(pendingKey(), {})[id] ? '已存在手機，等待上傳雲端…' : '已儲存到雲端';
+}
+function uploadTrip(id, rec) {
+  markPending(id, rec, true);
+  return db.set('rides', id, rec).then(() => markPending(id, rec, false))
+    .catch(e => { console.error(e); toast('網路不穩，行程已先存在手機，連線後會自動上傳'); });
+}
+function retryPending() {
+  if (!ME) return;
+  const p = local.get(pendingKey(), {});
+  Object.keys(p).forEach(id => db.set('rides', id, p[id]).then(() => markPending(id, p[id], false)).catch(() => {}));
+}
+const dt = t => t ? new Date(t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+function receiptHTML(r) {
+  const km = r.finalKm != null ? r.finalKm : 0, min = r.finalMin != null ? r.finalMin : 0;
+  const base = r.fareBase != null ? r.fareBase : BBC.RATE.base;
+  const kmFee = r.fareKm != null ? r.fareKm : Math.round(km * BBC.RATE.perKm);
+  const tFee = r.fareTime != null ? r.fareTime : Math.round(min * BBC.RATE.perMin);
+  const meter = r.meterFare != null ? r.meterFare : BBC.meterAmount(km, min);
+  const top = r.minFareTopUp != null ? r.minFareTopUp : Math.max(0, (r.finalFare || 0) - meter);
+  const L = (k, v) => `<div class="line" style="padding:9px 0"><span class="sub" style="font-size:14px">${k}</span><b style="text-align:right;max-width:65%;overflow-wrap:anywhere">${v}</b></div>`;
+  return `<div class="panel" style="padding:4px 14px;background:var(--page)">
+    ${L('行程編號', esc(r.id))}
+    ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
+    ${L('上車', esc((r.fromArea || '') + ' ' + (r.from || '')))}
+    ${L('下車', esc((r.toArea || '') + ' ' + (r.to || '')))}
+    ${r.note ? L('備註', esc(r.note)) : ''}
+    ${L('開始跳表', dt(r.startedAt))}
+    ${L('結束', dt(r.doneAt))}
+    ${L('里程／時間', esc(km) + ' 公里 · ' + esc(Math.round(min)) + ' 分鐘')}
+    ${L('起跳', 'NT$' + fmt(base))}
+    ${L('里程費（每公里 ' + BBC.RATE.perKm + '）', 'NT$' + fmt(kmFee))}
+    ${L('時間費（每分鐘 ' + BBC.RATE.perMin + '）', 'NT$' + fmt(tFee))}
+    ${L('跳表金額', 'NT$' + fmt(meter))}
+    ${top ? L('最低車資補足', '+NT$' + fmt(top)) : ''}
+    <div class="line" style="padding:12px 0"><span style="font-weight:700">實收車資</span><b style="font-size:20px">NT$${fmt(r.finalFare)}</b></div>
+    ${L('車輛', esc([r.plate, r.car, r.carColor].filter(Boolean).join(' · ') || '—'))}
+  </div>`;
+}
+function historyHTML() {
+  const t0 = BBC.startOfDay(), w0 = BBC.startOfDay(Date.now() - 6 * 86400000);
+  const all = myDone().sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  const list = HF === 'today' ? all.filter(r => r.doneAt >= t0) : HF === 'week' ? all.filter(r => r.doneAt >= w0) : all;
+  const sum = list.reduce((a, r) => a + (r.finalFare || 0), 0);
+  const chip = (k, label) => `<button type="button" data-hf="${k}" aria-pressed="${HF === k}" style="height:34px;padding:0 14px;border-radius:17px;font-size:13px;font-weight:700;background:${HF === k ? 'var(--ink)' : 'var(--ground)'};color:${HF === k ? 'var(--white)' : 'var(--grey)'}">${label}</button>`;
+  return `<div style="display:flex;flex-direction:column;gap:10px">
+    <div class="row"><p class="h2" style="font-size:18px">行程紀錄</p><span class="sub">${list.length} 趟 · NT$${fmt(sum)}</span></div>
+    <div style="display:flex;gap:8px">${chip('today', '今天')}${chip('week', '近 7 天')}${chip('all', '全部')}</div>
+    <div class="panel" style="padding-block:4px">
+      ${list.length ? list.slice(0, 200).map(r => `<button type="button" data-trip="${esc(r.id)}" class="line" style="width:100%;text-align:left;gap:10px;align-items:center;background:none;color:inherit;font-size:15px;padding:12px 0">
+          <span style="min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:12px;color:var(--grey)">${dt(r.doneAt)} · ${esc(r.finalKm != null ? r.finalKm : r.km)} 公里</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.from)} → ${esc(r.to)}</span></span>
+          <b style="flex-shrink:0">NT$${fmt(r.finalFare)} ›</b></button>`).join('')
+        : `<div class="line"><span class="sub">${HF === 'today' ? '今天' : HF === 'week' ? '近 7 天' : '目前'}還沒有完成的行程</span></div>`}
+    </div></div>`;
+}
+function openTrip(id) {
+  const r = myDone().find(x => x.id === id);
+  if (!r) return;
+  $('tdBody').innerHTML = receiptHTML(r);
+  $('tdState').textContent = local.get(pendingKey(), {})[id] ? '已存在手機，等待上傳雲端' : '已儲存到雲端';
+  $('tripDetail').hidden = false;
+}
 
 // ---------- 畫面 ----------
 function badge() { return S.unread ? `<span class="badge">${S.unread}</span>` : ''; }
@@ -248,9 +346,12 @@ function sheetHTML() {
         <button class="outline" data-a="chat" style="position:relative">傳訊息${badge()}</button></div></div>
       <button class="btn" style="background:var(--ink)" data-a="complete">完成行程</button></div>`;
     }
-    case 'done': return `<div class="card center" style="gap:8px"><div class="check"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-      <p class="sub">本趟車資（請向乘客收費）</p><div class="fare">NT$${fmt(r.finalFare)}</div><p class="sub">今日累計 NT$${fmt(todayStats().sum)} · ${todayStats().count} 趟</p>
-      <button class="btn" style="background:var(--purple);margin-top:8px" data-a="next">${ONLINE ? '繼續接單' : '完成'}</button></div>`;
+    case 'done': return `<div class="card" style="gap:10px;max-height:calc(100vh - 200px);overflow:hidden">
+      <div class="row"><div style="display:flex;align-items:center;gap:10px"><div class="check" style="width:36px;height:36px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><p class="h2">行程完成</p></div>
+        <span class="kicker" id="saveState">${saveStateText(r.id)}</span></div>
+      <p class="sub" style="margin-top:-4px">請向乘客收取 <b style="color:var(--ink);font-size:18px">NT$${fmt(r.finalFare)}</b>　今日累計 NT$${fmt(todayStats().sum)} · ${todayStats().count} 趟</p>
+      <div style="overflow-y:auto;min-height:0;flex:1 1 auto;margin-inline:-4px;padding-inline:4px">${receiptHTML(r)}</div>
+      <button class="btn" style="background:var(--purple);flex-shrink:0" data-a="next">${ONLINE ? '繼續接單' : '完成'}</button></div>`;
   }
   return '';
 }
@@ -261,7 +362,13 @@ function updateCountdown() {
   if (b) b.style.width = (S.left / SECS * 100) + '%';
 }
 
-function myDone() { return ME ? RIDES.filter(r => r.driverPhone === ME.phone && r.status === 'done') : []; }
+function myDone() {
+  if (!ME) return [];
+  const map = {};
+  localTrips().forEach(t => { map[t.id] = t; });                    // 手機備份
+  RIDES.filter(r => r.driverPhone === ME.phone && r.status === 'done').forEach(r => { map[r.id] = r; });  // 雲端為準
+  return Object.values(map);
+}
 function todayStats() {
   const t0 = BBC.startOfDay();
   const list = myDone().filter(r => (r.doneAt || 0) >= t0);
@@ -289,10 +396,7 @@ function earnHTML() {
     <div class="stats"><div class="stat"><span class="sub" style="font-size:13px">今日行程</span><b style="color:var(--pink)">${td.count}</b></div>
       <div class="stat"><span class="sub" style="font-size:13px">7 天行程</span><b style="color:var(--blue)">${weekTrips}</b></div>
       <div class="stat"><span class="sub" style="font-size:13px">接單率</span><b style="color:var(--purple)">${rate}%</b></div></div>
-    <div class="panel" style="padding-block:6px">
-      ${td.list.length ? td.list.sort((a, b) => b.doneAt - a.doneAt).map(r => `<div class="line"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${BBC.hhmm(r.doneAt)} ${esc(r.from)} → ${esc(r.to)}</span><b>NT$${fmt(r.finalFare)}</b></div>`).join('')
-        : '<div class="line"><span class="sub">今天還沒有完成的行程</span></div>'}
-    </div>`;
+    ${historyHTML()}`;
 }
 
 function render() {
@@ -346,7 +450,7 @@ function enter(d) {
     ME = withPhone(me);
   });
   unsubR = db.watch('rides', onRides);
-  presence(); startHeartbeat(); render();
+  presence(); startHeartbeat(); retryPending(); render();
 }
 
 $('regForm').addEventListener('submit', async e => {
@@ -453,6 +557,9 @@ if (!('speechSynthesis' in window)) $('voiceBtn').hidden = true;
 
 // ---------- 點擊 ----------
 document.addEventListener('click', e => {
+  const tr = e.target.closest('[data-trip]'); if (tr) return openTrip(tr.dataset.trip);
+  const hf = e.target.closest('[data-hf]'); if (hf) { HF = hf.dataset.hf; return render(); }
+  if (e.target.closest('#tdClose') || e.target.id === 'tripDetail') { $('tripDetail').hidden = true; return; }
   const b = e.target.closest('[data-a]'); if (b) return A[b.dataset.a]();
   const q = e.target.closest('[data-q]'); if (q) return sendMsg(q.dataset.q);
   if (e.target.closest('#tab-home')) { S.tab = 'home'; render(); }
