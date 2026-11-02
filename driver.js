@@ -189,7 +189,6 @@ const A = {
   },
   next() { CUR = null; S.status = ONLINE ? 'searching' : 'offline'; presence(); onRides(RIDES); },
   chat() { openChat(); },
-  manual() { openManual(); },
   speed() { SPEED = SPEED === 1 ? 20 : 1; toast(SPEED === 1 ? '跳表恢復正常速度' : '示範快轉：跳表速度 ×20'); render(); }
 };
 const meterAmount = () => meterFare();
@@ -201,11 +200,9 @@ function sheetHTML() {
   const r = CUR || {};
   switch (S.status) {
     case 'offline': return `<div class="offline-wrap"><button class="online" data-a="online">上線</button>
-      <div class="card center">${LOGO}<p class="h2">${ME ? esc(ME.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收管理平台的派單</p>
-      <button class="outline" data-a="manual" style="margin-top:8px;width:100%">＋ 手動輸入行程</button></div></div>`;
+      <div class="card center">${LOGO}<p class="h2">${ME ? esc(ME.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收管理平台的派單</p></div></div>`;
     case 'searching': return `<div class="card searching"><div class="track"><div class="fill"></div></div>
-      <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div>
-      <button class="outline" data-a="manual" style="width:100%">＋ 手動輸入行程</button></div>`;
+      <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div></div>`;
     case 'request': return `<div class="req"><div class="row"><div class="chip">管理平台派單 · ${esc(r.id)}</div><div class="dim" id="cdText">剩 ${S.left} 秒</div></div>
       <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
       <div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${fmt(r.estFare)}</div><div class="dim">預估車資（跳表計費）</div></div>
@@ -217,7 +214,7 @@ function sheetHTML() {
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
       <div style="display:flex;gap:10px"><button class="decline" data-a="decline" aria-label="拒絕">${ICON_X}</button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div></div>`;
-    case 'pickup': return `<div class="card"><div class="kicker">${r.source === 'driver' ? '手動行程' : '前往上車地點'} · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
+    case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
       ${r.note ? `<p class="sub">備註：${esc(r.note)}</p>` : ''}
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
         <div style="flex:1;min-width:0"><div style="font-weight:500">${esc(r.riderName || '乘客')}</div><div class="sub" style="font-size:13px">${esc(r.riderPhone || '未留電話')}</div></div>
@@ -400,45 +397,6 @@ $('reg-model').addEventListener('change', () => { $('reg-other-wrap').hidden = $
 $('reg-seats').addEventListener('change', () => { if ($('reg-seats').value !== '5 人座') $('reg-service').value = '蹦蹦車大型（6 人以上）'; });
 $('reg-fuel').addEventListener('change', () => { if ($('reg-fuel').value === '純電動') $('reg-service').value = '蹦蹦車綠能（電動車）'; });
 
-// ---------- 手動輸入行程（也會寫進雲端，管理平台看得到） ----------
-$('spots').innerHTML = ALL_SPOTS.map(s => `<option value="${s.n}">${s.d}</option>`).join('');
-{
-  const opts = KHH.map(a => `<option>${a.d}</option>`).join('');
-  $('m-from-area').innerHTML = opts; $('m-to-area').innerHTML = opts;
-}
-['from', 'to'].forEach(k => $('m-' + k).addEventListener('input', () => {
-  const s = ALL_SPOTS.find(p => p.n === $('m-' + k).value.trim());
-  if (s) $('m-' + k + '-area').value = s.d;
-}));
-function openManual() {
-  $('m-from-area').value = AREA; $('m-to-area').value = AREA;
-  $('manualErr').textContent = ''; $('manual').hidden = false;
-}
-$('manualForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const err = $('manualErr');
-  const from = $('m-from').value.trim(), to = $('m-to').value.trim(), kmTxt = $('m-km').value.trim();
-  if (!from) return err.textContent = '請輸入上車地址';
-  if (!to) return err.textContent = '請輸入下車地址';
-  const kmIn = parseFloat(kmTxt);
-  if (kmTxt && !(kmIn > 0)) return err.textContent = '公里數要大於 0';
-  const est = BBC.estimateTrip(from, $('m-from-area').value, to, $('m-to-area').value, kmIn);
-  const now = Date.now();
-  const ride = Object.assign({
-    source: 'driver', status: 'pickup', riderName: $('m-name').value.trim() || '現場乘客', riderPhone: '', note: '',
-    from, to, driverPhone: ME.phone, driverName: ME.name, plate: ME.plate, declinedBy: [],
-    createdAt: now, assignedAt: now, acceptedAt: now
-  }, est);
-  err.textContent = '建立中…';
-  try {
-    const id = await db.add('rides', ride);
-    ONLINE = true;
-    CUR = Object.assign({ id }, ride); S.status = 'pickup'; S.unread = 0; CHAT = [];
-    $('manual').hidden = true; e.target.reset(); err.textContent = '';
-    presence(); render();
-  } catch (x) { console.error(x); err.textContent = '連線失敗，請檢查網路後再試一次'; }
-});
-
 // ---------- 區域 ----------
 $('areaGrid').innerHTML = KHH.map(a => `<button data-area="${a.d}">${a.d}</button>`).join('');
 
@@ -496,7 +454,6 @@ document.addEventListener('click', e => {
     $('areaPick').hidden = false;
   }
   if (e.target.closest('#areaClose') || e.target.id === 'areaPick') $('areaPick').hidden = true;
-  if (e.target.closest('#manualClose') || e.target.id === 'manual') $('manual').hidden = true;
   if (e.target.closest('#profileBtn') && ME) {
     $('pfName').textContent = ME.name;
     $('pfPhone').textContent = ME.phone;
