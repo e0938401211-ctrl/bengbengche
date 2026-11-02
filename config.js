@@ -16,4 +16,11 @@
 //   messagingSenderId: "1234567890",
 //   appId: "1:1234567890:web:abcdef"
 // };
-window.BBC_FIREBASE_CONFIG = null;
+window.BBC_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCxcmFj-HQ5hTgCF6LGlOa4MxJLHqELRLw",
+  authDomain: "bengbengche.firebaseapp.com",
+  projectId: "bengbengche",
+  storageBucket: "bengbengche.firebasestorage.app",
+  messagingSenderId: "812707165820",
+  appId: "1:812707165820:web:2110d30ae3a5ffb108fbf9"
+};
