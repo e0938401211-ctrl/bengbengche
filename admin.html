@@ -278,6 +278,7 @@ td .small { font-size: 12px; color: var(--muted); }
     <section class="box" id="secDrivers" aria-labelledby="driversTitle">
       <div class="boxhead"><h2 id="driversTitle">司機動態</h2><div class="chips" id="driverFilters" role="group" aria-label="篩選司機"></div>
         <button class="sbtn primary" type="button" id="addDriverBtn" style="margin-left:auto">＋ 新增司機帳號</button></div>
+      <div class="banner" id="junkBox" hidden><span id="junkText"></span><button class="sbtn danger" type="button" id="junkBtn">一鍵清除</button></div>
       <div class="tablebox"><table>
         <thead><tr><th>司機</th><th>車輛</th><th>服務類型</th><th>狀態</th><th>所在區</th><th>目前行程</th><th>今日</th><th>最後回報</th><th>帳號管理</th></tr></thead>
         <tbody id="driverRows"></tbody>
@@ -300,10 +301,10 @@ td .small { font-size: 12px; color: var(--muted); }
 <div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=202611030155"></script>
+<script src="config.js?v=202611030203"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
-<script src="data.js?v=202611030155"></script>
-<script src="admin.js?v=202611030155"></script>
+<script src="data.js?v=202611030203"></script>
+<script src="admin.js?v=202611030203"></script>
 </body>
 </html>

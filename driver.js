@@ -73,7 +73,7 @@ function stopMeter() { clearInterval(meterT); meterT = null; }
 
 // ---------- 雲端寫入 ----------
 function presence(extra) {
-  if (!ME) return Promise.resolve();
+  if (!ME || !ME.phone) return Promise.resolve();
   const status = !ONLINE ? 'offline' : (CUR && ['pickup', 'trip'].includes(S.status) ? 'busy' : 'online');
   return db.set('drivers', ME.phone, Object.assign({ status, area: AREA, lastSeen: Date.now(), rideId: CUR && status === 'busy' ? CUR.id : '' }, extra || {})).catch(fail);
 }
@@ -331,8 +331,9 @@ function showAuth(msg) {
   if (msg) $('loginErr').textContent = msg;
   render();
 }
+const withPhone = d => Object.assign({}, d, { phone: d.phone || d.id });   // 手機號碼就是帳號編號
 function enter(d) {
-  ME = d; local.set('session', d.phone);
+  ME = withPhone(d); local.set('session', d.phone);
   ONLINE = d.status === 'online' || d.status === 'busy';
   S = { tab: 'home', status: ONLINE ? 'searching' : 'offline', left: SECS, unread: 0 };
   $('auth').hidden = true;
@@ -342,7 +343,7 @@ function enter(d) {
     const me = list.find(x => x.id === ME.phone);
     if (!me) return;   // 名單裡暫時找不到自己時不登出（被刪除的帳號下次登入時會被擋下）
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
-    ME = me;
+    ME = withPhone(me);
   });
   unsubR = db.watch('rides', onRides);
   presence(); startHeartbeat(); render();

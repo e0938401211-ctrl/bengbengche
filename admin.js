@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'assigned', 'pickup', 'trip'];
 
-let ADMIN = null, RIDES = [], DRIVERS = [];
+let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [];
 let rideFilter = 'active', driverFilter = 'all';
 let unsub = [];
 
@@ -19,7 +19,7 @@ function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200);
 }
-const fail = e => { console.error(e); toast('連線失敗，請檢查網路後再試一次'); };
+const fail = e => { console.error(e); toast('失敗：' + ((e && (e.code || e.message)) || '請檢查網路後再試一次')); };
 BBC.onError = err => toast('雲端資料庫拒絕存取：' + (err.code || err.message) + '（請檢查 Firestore 規則）');
 
 // ---------- 登入 ----------
@@ -54,7 +54,7 @@ function enter(a) {
   let dismissed = false; try { dismissed = sessionStorage.getItem('bbc_hide_localBanner') === '1'; } catch (e) {}
   $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
   unsub.push(db.watch('rides', l => { RIDES = l; renderAll(); }));
-  unsub.push(db.watch('drivers', l => { DRIVERS = l; renderAll(); }));
+  unsub.push(db.watch('drivers', l => { JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver); renderAll(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
   renderAll();
 }
@@ -126,7 +126,7 @@ $('dispatchForm').addEventListener('submit', async e => {
   const ride = Object.assign({
     source: 'admin', createdBy: ADMIN.id, riderName: $('d-rider').value.trim() || '乘客', riderPhone: $('d-phone').value.trim(),
     note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now,
-    status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? drv.name : '', plate: drv ? (drv.plate || '') : '',
+    status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
     assignedAt: drv ? now : 0
   }, est);
   err.textContent = '建立中…';
@@ -137,7 +137,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     ['d-rider', 'd-phone', 'd-from', 'd-to', 'd-note', 'd-km'].forEach(i => { $(i).value = ''; });
     updateEstimate();
     if (isMobile()) { rideFilter = 'active'; setView('rides'); renderRides(); }
-  } catch (x) { fail(x); err.textContent = '建立失敗，請再試一次'; }
+  } catch (x) { fail(x); err.textContent = '建立失敗：' + (x.code || x.message || '請再試一次'); }
 });
 
 async function assign(rideId, phone) {
@@ -146,7 +146,7 @@ async function assign(rideId, phone) {
   if (!d) return toast(phone === '__auto' ? '目前沒有可派的線上司機' : '請先選擇司機');
   if (state(d) !== 'online') return toast(d.name + ' 目前不是線上空車，無法派單');
   try {
-    await db.set('rides', rideId, { status: 'assigned', driverPhone: d.id, driverName: d.name, plate: d.plate || '', assignedAt: Date.now() });
+    await db.set('rides', rideId, { status: 'assigned', driverPhone: d.id, driverName: d.name || d.id, plate: d.plate || '', assignedAt: Date.now() });
     toast(`行程 ${rideId} 已派給 ${d.name}`);
   } catch (x) { fail(x); }
 }
@@ -245,6 +245,8 @@ const DRIVER_FILTERS = [
   ['disabled', '已停用', d => state(d) === 'disabled']
 ];
 function renderDrivers() {
+  $('junkBox').hidden = !JUNK.length;
+  $('junkText').textContent = `發現 ${JUNK.length} 筆沒有名字的無效司機資料（舊版程式錯誤產生的），不影響真正的司機帳號。`;
   $('driverFilters').innerHTML = DRIVER_FILTERS.map(([k, label, fn]) =>
     `<button type="button" class="chip" data-df="${k}" aria-pressed="${driverFilter === k}">${label}<i>${DRIVERS.filter(fn).length}</i></button>`).join('');
   const fn = DRIVER_FILTERS.find(f => f[0] === driverFilter)[2];
@@ -386,6 +388,16 @@ function setView(v) {
 try { const v = localStorage.getItem('bbc_admin_view'); if (v) setView(v); } catch (e) {}
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 
+async function cleanJunk() {
+  const list = JUNK.slice();
+  if (!list.length) return;
+  $('junkBtn').disabled = true; $('junkBtn').textContent = '清除中…';
+  let ok = 0;
+  for (const d of list) { try { await db.remove('drivers', d.id); ok++; } catch (x) { console.error(x); } }
+  $('junkBtn').disabled = false; $('junkBtn').textContent = '一鍵清除';
+  toast(`已清除 ${ok} 筆無效資料`);
+}
+
 // ---------- 點擊 ----------
 document.addEventListener('click', e => {
   const t = e.target;
@@ -404,6 +416,7 @@ document.addEventListener('click', e => {
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
   if (t.closest('#addDriverBtn')) return addDriverDialog();
+  if (t.closest('#junkBtn')) return cleanJunk();
   if (t.closest('#pwBtn') || t.closest('#bannerPwBtn')) return adminPwDialog();
   if (t.closest('#logoutBtn')) { session.del(); return showLogin(); }
 });

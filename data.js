@@ -94,6 +94,8 @@
   }
   const hhmm = t => t ? new Date(t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
   const ONLINE_STALE_MS = 90 * 1000;   // 超過 90 秒沒回報視為斷線
+  // 有名字和手機的才是真正的司機帳號
+  const isRealDriver = d => !!(d && d.name && (d.phone || /^09\d{8}$/.test(d.id)));
   function driverState(d) {
     if (!d || d.active === false) return 'disabled';
     if (!d.status || d.status === 'offline') return 'offline';
@@ -127,8 +129,8 @@
         setTimeout(() => emit(c), 0);  // 示範模式沒有快取問題
         return () => { listeners[c] = listeners[c].filter(f => f !== fn); };
       },
-      async get(c, id) { const o = read(c); return o[id] ? Object.assign({ id }, o[id]) : null; },
-      async set(c, id, data) { const o = read(c); o[id] = Object.assign({}, o[id] || {}, data); write(c, o); },
+      async get(c, id) { if (!id) throw new Error('資料編號錯誤'); const o = read(c); return o[id] ? Object.assign({ id }, o[id]) : null; },
+      async set(c, id, data) { if (!id) throw new Error('資料編號錯誤'); const o = read(c); o[id] = Object.assign({}, o[id] || {}, data); write(c, o); },
       async add(c, data) { const id = rideNo(); const o = read(c); o[id] = data; write(c, o); return id; },
       async remove(c, id) { const o = read(c); delete o[id]; write(c, o); }
     };
@@ -139,6 +141,10 @@
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     const fs = firebase.firestore();
     const col = c => fs.collection('bbc_' + c);
+    // 沒有編號時 Firestore 會自動產生新文件，這裡直接擋下，避免產生沒有名字的幽靈資料
+    const ref = (c, id) => { if (!id || typeof id !== 'string') throw new Error('資料編號錯誤'); return col(c).doc(id); };
+    // Firestore 不接受 undefined 欄位，先清掉
+    const clean = o => JSON.parse(JSON.stringify(o));
     return {
       mode: 'cloud',
       watch(c, fn) {
@@ -147,10 +153,10 @@
           err => { console.error('Firestore', err); if (window.BBC.onError) window.BBC.onError(err); }
         );
       },
-      async get(c, id) { const d = await col(c).doc(id).get(); return d.exists ? Object.assign({ id: d.id }, d.data()) : null; },
-      async set(c, id, data) { await col(c).doc(id).set(data, { merge: true }); },
-      async add(c, data) { const id = rideNo(); await col(c).doc(id).set(data); return id; },
-      async remove(c, id) { await col(c).doc(id).delete(); }
+      async get(c, id) { const d = await ref(c, id).get(); return d.exists ? Object.assign({ id: d.id }, d.data()) : null; },
+      async set(c, id, data) { await ref(c, id).set(clean(data), { merge: true }); },
+      async add(c, data) { const id = rideNo(); await ref(c, id).set(clean(data)); return id; },
+      async remove(c, id) { await ref(c, id).delete(); }
     };
   }
 
@@ -164,10 +170,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-6',
+    VERSION: '2026.11.03-7',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
-    hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, ONLINE_STALE_MS,
+    hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };
