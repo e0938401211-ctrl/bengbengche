@@ -56,7 +56,7 @@ let ONLINE = false;     // 是否上線接單
 let RIDES = [];         // 所有行程（即時）
 let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
-let AREA = local.get('area', '左營區');
+const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
 let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null;
 let M = { rideId: null, min: 0, km: 0, lastPush: 0 }, SPEED = 1;
 
@@ -297,10 +297,9 @@ function earnHTML() {
 
 function render() {
   if (S.status !== 'pickup' && S.status !== 'trip') $('chat').hidden = true;
-  const r = CUR, a = KHH.find(x => x.d === AREA);
-  $('locText').textContent = '高雄市 ' + AREA;
-  $('mapLbl2').textContent = '高雄市' + AREA;
-  $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? r.to : (a ? a.p[0][0] : '');
+  const r = CUR;
+  $('mapLbl2').textContent = '高雄市';
+  $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? r.to : '高雄車站';
   $('pill').textContent = 'NT$ ' + fmt(todayStats().sum);
   $('route').hidden = !(S.status === 'pickup' || S.status === 'trip');
   $('home').hidden = S.tab !== 'home';
@@ -411,8 +410,6 @@ $('reg-model').addEventListener('change', () => { $('reg-other-wrap').hidden = $
 $('reg-seats').addEventListener('change', () => { if ($('reg-seats').value !== '5 人座') $('reg-service').value = '蹦蹦車大型（6 人以上）'; });
 $('reg-fuel').addEventListener('change', () => { if ($('reg-fuel').value === '純電動') $('reg-service').value = '蹦蹦車綠能（電動車）'; });
 
-// ---------- 區域 ----------
-$('areaGrid').innerHTML = KHH.map(a => `<button data-area="${a.d}">${a.d}</button>`).join('');
 
 // ---------- 和乘客聊天（示範：乘客自動回覆） ----------
 let CHAT = [], VOICE = false, riderT = null;
@@ -457,17 +454,10 @@ if (!('speechSynthesis' in window)) $('voiceBtn').hidden = true;
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-a]'); if (b) return A[b.dataset.a]();
   const q = e.target.closest('[data-q]'); if (q) return sendMsg(q.dataset.q);
-  const ar = e.target.closest('[data-area]');
-  if (ar) { AREA = ar.dataset.area; local.set('area', AREA); $('areaPick').hidden = true; presence(); return render(); }
   if (e.target.closest('#tab-home')) { S.tab = 'home'; render(); }
   if (e.target.closest('#tab-earn')) { S.tab = 'earn'; render(); }
   if (e.target.closest('#seg-reg')) seg('reg');
   if (e.target.closest('#seg-login')) seg('login');
-  if (e.target.closest('#locBtn')) {
-    document.querySelectorAll('#areaGrid button').forEach(x => x.setAttribute('aria-pressed', x.dataset.area === AREA));
-    $('areaPick').hidden = false;
-  }
-  if (e.target.closest('#areaClose') || e.target.id === 'areaPick') $('areaPick').hidden = true;
   if (e.target.closest('#profileBtn') && ME) {
     $('pfName').textContent = ME.name;
     $('pfPhone').textContent = ME.phone;

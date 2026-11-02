@@ -185,11 +185,10 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
       <button class="round" aria-label="安全工具"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></button>
     </div>
 
-    <button class="locchip" id="locBtn" aria-label="更改所在區域">
+    <div class="locchip" id="locBtn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D12A6E" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-      <span id="locText">高雄市</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6560" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
+      <span id="locText">服務範圍：高雄市全區</span>
+    </div>
     <div class="sheet" id="sheet" aria-live="polite"></div>
   </section>
 
@@ -251,15 +250,6 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
     </form>
   </section>
 
-  <div class="overlay" id="areaPick" hidden>
-    <div class="psheet" role="dialog" aria-label="選擇所在區域" style="gap:12px">
-      <div class="row"><p class="h2">選擇你目前在哪一區</p>
-        <button class="round flat" id="areaClose" aria-label="關閉"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-      <p class="sub" style="margin-top:-6px">管理平台會看到你所在的區域，優先派附近的單給你。</p>
-      <div class="area-grid" id="areaGrid"></div>
-    </div>
-  </div>
-
   <div class="overlay" id="profile" hidden>
     <div class="psheet" role="dialog" aria-label="個人檔案">
       <div class="row" style="margin-bottom:6px"><p class="h2" id="pfName"></p>
@@ -277,10 +267,10 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
 
-<script src="config.js?v=202611030144"></script>
+<script src="config.js?v=202611030155"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
-<script src="data.js?v=202611030144"></script>
-<script src="driver.js?v=202611030144"></script>
+<script src="data.js?v=202611030155"></script>
+<script src="driver.js?v=202611030155"></script>
 </body>
 </html>

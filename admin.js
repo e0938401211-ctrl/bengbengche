@@ -67,16 +67,17 @@ function available(excludePhones) {
 }
 function nearestDriver(fromText, fromArea, exclude) {
   const p = BBC.locate(fromText, fromArea).c;
-  const list = available(exclude).map(d => ({ d, km: BBC.distKm(BBC.areaCenter(d.area), p) })).sort((a, b) => a.km - b.km);
+  const hasArea = d => BBC.KHH.some(x => x.d === d.area);
+  const list = available(exclude).map(d => ({ d, km: hasArea(d) ? BBC.distKm(BBC.areaCenter(d.area), p) : 9999 })).sort((a, b) => a.km - b.km);
   return list[0] ? list[0].d : null;
 }
 function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
   const list = available(exclude);
   const p = fromText ? BBC.locate(fromText, fromArea).c : null;
-  const rows = list.map(d => ({ d, km: p ? BBC.distKm(BBC.areaCenter(d.area), p) : 0 })).sort((a, b) => a.km - b.km);
-  let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的線上司機</option>' : '<option value="">選擇司機…</option>';
+  const rows = list.map(d => ({ d, km: p && KHH.some(x => x.d === d.area) ? BBC.distKm(BBC.areaCenter(d.area), p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
+  let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給線上空車司機</option>' : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')} · ${esc(d.area || '')}${p ? ' · 約 ' + km.toFixed(1) + ' km' : ''}</option>`).join('')
+    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')} · ${esc(d.area || '')}${km != null ? ' · 約 ' + km.toFixed(1) + ' km' : ''}</option>`).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -204,7 +205,7 @@ function renderRides() {
       : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
-      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機</option>')}</select>
+      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給線上空車司機</option>')}</select>
         <button class="sbtn primary" type="button" data-assign="${esc(r.id)}">派單</button>
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;

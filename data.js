@@ -52,7 +52,7 @@
     return 2 * 6371 * Math.asin(Math.sqrt(h));
   }
   function areaCenter(area) {
-    const a = KHH.find(x => x.d === area) || KHH[0];
+    const a = KHH.find(x => x.d === area) || KHH.find(x => x.d === '三民區');
     return [a.p[0][1], a.p[0][2]];
   }
   // 地址 → 座標：符合地標就用地標，否則用行政區代表點
@@ -164,7 +164,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-5',
+    VERSION: '2026.11.03-6',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
     hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, ONLINE_STALE_MS,
