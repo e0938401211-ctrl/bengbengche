@@ -329,12 +329,7 @@ function enter(d) {
     if (!ME) return;
     if (meta && meta.fromCache) return;   // 手機剛連上時會先收到本機暫存（可能是空的），只相信雲端回來的資料
     const me = list.find(x => x.id === ME.phone);
-    if (!me) {
-      // 即時資料有時會先送來不完整的清單；再向雲端確認一次，真的被刪除才登出
-      const phone = ME.phone;
-      db.get('drivers', phone).then(d => { if (!d && ME && ME.phone === phone) { local.del('session'); showAuth('這個帳號已被管理員刪除'); } }).catch(() => {});
-      return;
-    }
+    if (!me) return;   // 名單裡暫時找不到自己時不登出（被刪除的帳號下次登入時會被擋下）
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
     ME = me;
   });
