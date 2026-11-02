@@ -247,6 +247,23 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
     </div>
   </div>
 
+  <div class="overlay" id="manual" hidden>
+    <form class="psheet" id="manualForm" novalidate aria-label="手動輸入行程" style="gap:12px;max-height:90%;overflow-y:auto">
+      <div class="row"><p class="h2">手動輸入行程</p>
+        <button type="button" class="round flat" id="manualClose" aria-label="關閉"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <p class="sub" style="margin-top:-6px">路邊招車或電話叫車時使用。可以自己打地址，也可以從清單選地標。</p>
+      <div class="field"><label for="m-from">上車地址</label><input id="m-from" list="spots" autocomplete="off" placeholder="例如 高雄車站、中正四路 211 號"></div>
+      <div class="field"><label for="m-from-area">上車行政區</label><select id="m-from-area"></select></div>
+      <div class="field"><label for="m-to">下車地址</label><input id="m-to" list="spots" autocomplete="off" placeholder="例如 高雄國際機場"></div>
+      <div class="field"><label for="m-to-area">下車行政區</label><select id="m-to-area"></select></div>
+      <div class="field"><label for="m-km">預估公里數（可不填）</label><input id="m-km" type="number" inputmode="decimal" min="0.5" step="0.1" placeholder="不填會依地點自動估算"></div>
+      <div class="field"><label for="m-name">乘客稱呼（可不填）</label><input id="m-name" autocomplete="off" placeholder="現場乘客"></div>
+      <p class="err" id="manualErr" role="alert"></p>
+      <button class="btn" type="submit" style="background:var(--orange)">建立行程</button>
+    </form>
+  </div>
+  <datalist id="spots"></datalist>
+
   <div class="overlay" id="profile" hidden>
     <div class="psheet" role="dialog" aria-label="個人檔案">
       <div class="row" style="margin-bottom:6px"><p class="h2" id="pfName"></p>
@@ -427,7 +444,8 @@ const A = {
     set({ status: 'done', today: S.today + f, trips: S.trips + 1 });
   },
   next: next,
-  chat: () => openChat()
+  chat: () => openChat(),
+  manual: () => openManual()
 };
 
 const LOGO = `<div class="logo"><div class="tile"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16v-3l2.5-4.5h13L21 13v3z"/><circle cx="7.5" cy="17.5" r="1.8"/><circle cx="16.5" cy="17.5" r="1.8"/><path d="M8 5.5c.8-1 1.6-1 2.4 0M13.6 5.5c.8-1 1.6-1 2.4 0"/></svg></div><div class="word"><span style="color:var(--pink)">蹦</span><span style="color:var(--blue)">蹦</span><span style="color:var(--purple)">車</span></div></div>`;
@@ -436,9 +454,11 @@ function sheetHTML() {
   const r = RIDES[S.ride];
   switch (S.status) {
     case 'offline': return `<div class="offline-wrap"><button class="online" data-a="online">上線</button>
-      <div class="card center">${LOGO}<p class="h2">${USER ? esc(USER.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收行程</p></div></div>`;
+      <div class="card center">${LOGO}<p class="h2">${USER ? esc(USER.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收行程</p>
+      <button class="outline" data-a="manual" style="margin-top:8px;width:100%">＋ 手動輸入行程</button></div></div>`;
     case 'searching': return `<div class="card searching"><div class="track"><div class="fill"></div></div>
-      <div class="row"><div><p class="h2">正在尋找行程…</p><p class="sub">附近需求：普通</p></div><button class="outline" data-a="offline">下線</button></div></div>`;
+      <div class="row"><div><p class="h2">正在尋找行程…</p><p class="sub">附近需求：普通</p></div><button class="outline" data-a="offline">下線</button></div>
+      <button class="outline" data-a="manual" style="width:100%">＋ 手動輸入行程</button></div>`;
     case 'request': return `<div class="req"><div class="row"><div class="chip">${esc((USER && (USER.service || USER.type)) || r.type)}</div><div class="dim">剩 ${S.left} 秒</div></div>
       <div class="track" style="background:#2D3833"><div class="fill" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
       <div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${r.fare}</div><div class="dim">預估車資（跳表計費）</div></div>
@@ -449,12 +469,12 @@ function sheetHTML() {
       </div>
       <div style="display:flex;gap:10px"><button class="decline" data-a="decline" aria-label="拒絕"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div></div>`;
-    case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${r.pickupMin} 分鐘</div><p class="h2">${r.from}</p>
+    case 'pickup': return `<div class="card"><div class="kicker">${r.manual ? '手動行程 · 上車地點' : '前往上車地點 · ' + r.pickupMin + ' 分鐘'}</div><p class="h2">${r.from}</p>
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${r.rider[0]}</div>
         <div style="flex:1;min-width:0"><div style="font-weight:500">${r.rider}</div><div class="sub" style="font-size:13px">★ ${r.rating}</div></div>
         <button class="round flat" data-a="chat" aria-label="傳訊息給乘客" style="position:relative"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>${badge()}</button>
         <button class="round flat" aria-label="打電話給乘客"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg></button>
-      </div><button class="btn" style="background:var(--pink)" data-a="arrive">已抵達，開始行程</button></div>`;
+      </div><button class="btn" style="background:var(--pink)" data-a="arrive">${r.manual ? '乘客已上車，開始跳表' : '已抵達，開始行程'}</button></div>`;
     case 'trip': return `<div class="card"><div class="row"><div class="kicker">${M.frac >= 1 ? '已抵達目的地' : '行程中'}</div><div class="kicker" id="mStat">${M.frac >= 1 ? '請向乘客收費' : '剩約 ' + Math.max(1, Math.ceil(r.tripMin - M.min)) + ' 分鐘'}</div></div><p class="h2">${r.to}</p>
       <div class="meter" role="status" aria-label="跳表">
         <div class="meter-top"><span>蹦蹦車跳表</span>${M.frac >= 1 ? '<span>停表</span>' : '<span class="live">計費中</span>'}</div>
@@ -535,6 +555,7 @@ document.addEventListener('click', e => {
   if (e.target.closest('#areaClose') || e.target.id === 'areaPick') $('areaPick').hidden = true;
   const ar = e.target.closest('[data-area]');
   if (ar) { AREA = ar.dataset.area; store.set('bbc_area', AREA); $('areaPick').hidden = true; render(); }
+  if (e.target.closest('#manualClose') || e.target.id === 'manual') $('manual').hidden = true;
   if (e.target.closest('#chatClose')) { $('chat').hidden = true; render(); }
   if (e.target.closest('#voiceBtn')) {
     VOICE = !VOICE; $('voiceBtn').setAttribute('aria-pressed', VOICE);
@@ -675,6 +696,51 @@ function startMeter() {
 }
 
 $('areaGrid').innerHTML = `<button class="all" data-area="全高雄">全高雄（不限區域）</button>` + KHH.map(a => `<button data-area="${a.d}">${a.d}</button>`).join('');
+
+// ---- 手動輸入行程 ----
+$('spots').innerHTML = ALL_SPOTS.map(s => `<option value="${s.n}">${s.d}</option>`).join('');
+{
+  const opts = KHH.map(a => `<option>${a.d}</option>`).join('');
+  $('m-from-area').innerHTML = opts; $('m-to-area').innerHTML = opts;
+}
+['from', 'to'].forEach(k => $('m-' + k).addEventListener('input', () => {
+  const s = ALL_SPOTS.find(p => p.n === $('m-' + k).value.trim());
+  if (s) $('m-' + k + '-area').value = s.d;     // 選到地標時自動帶入行政區
+}));
+function openManual() {
+  const d = AREA === '全高雄' ? '左營區' : AREA;
+  $('m-from-area').value = d; $('m-to-area').value = d;
+  $('manualErr').textContent = '';
+  $('manual').hidden = false;
+}
+function locateSpot(txt, area) {
+  const s = ALL_SPOTS.find(p => p.n === txt) || ALL_SPOTS.find(p => txt.includes(p.n));
+  if (s) return { d: s.d, c: s.c };
+  const a = KHH.find(x => x.d === area);           // 找不到地標時，用該區的代表點估算
+  return { d: area, c: [a.p[0][1], a.p[0][2]] };
+}
+$('manualForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const err = $('manualErr');
+  const fromTxt = $('m-from').value.trim(), toTxt = $('m-to').value.trim(), kmTxt = $('m-km').value.trim();
+  if (!fromTxt) return err.textContent = '請輸入上車地址';
+  if (!toTxt) return err.textContent = '請輸入下車地址';
+  const kmIn = parseFloat(kmTxt);
+  if (kmTxt && !(kmIn > 0)) return err.textContent = '公里數要大於 0';
+  const f = locateSpot(fromTxt, $('m-from-area').value), t = locateSpot(toTxt, $('m-to-area').value);
+  const road = kmIn > 0 ? kmIn : Math.max(1.5, distKm(f.c, t.c) * 1.3);
+  const tripMin = Math.max(5, Math.round(road / (road > 15 ? 45 : 25) * 60 + 2));
+  stopTimers(); CHAT = []; S.unread = 0;
+  RIDES[S.ride] = {
+    type: '手動行程', manual: true, rating: '—', pickupMin: 0, pickupKm: '0',
+    fare: Math.max(100, Math.round((50 + road * 20 + tripMin * 2) / 5) * 5),
+    from: `${f.d} ${fromTxt}`, to: `${t.d} ${toTxt}`,
+    tripMin, tripKm: road.toFixed(1), roadKm: road,
+    rider: $('m-name').value.trim() || '現場乘客'
+  };
+  $('manual').hidden = true; e.target.reset();
+  set({ status: 'pickup', tab: 'home' });
+});
 
 document.getElementById('authLogo').innerHTML = LOGO;
 (function start() {
