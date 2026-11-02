@@ -65,7 +65,8 @@ function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3500);
 }
-const fail = e => { console.error(e); toast('連線失敗，請檢查網路後再試一次'); };
+const fail = e => { console.error(e); toast('連線失敗：' + ((e && (e.code || e.message)) || '請檢查網路後再試一次')); };
+BBC.onError = err => toast('雲端連線錯誤：' + (err.code || err.message));
 const meterFare = () => BBC.meterAmount(M.km, M.min);
 function stopCountdown() { clearInterval(countT); countT = null; }
 function stopMeter() { clearInterval(meterT); meterT = null; }
@@ -327,7 +328,12 @@ function enter(d) {
   unsubD = db.watch('drivers', list => {
     if (!ME) return;
     const me = list.find(x => x.id === ME.phone);
-    if (!me) return showAuth('這個帳號已被管理員刪除');
+    if (!me) {
+      // 即時資料有時會先送來不完整的清單；再向雲端確認一次，真的被刪除才登出
+      const phone = ME.phone;
+      db.get('drivers', phone).then(d => { if (!d && ME && ME.phone === phone) { local.del('session'); showAuth('這個帳號已被管理員刪除'); } }).catch(() => {});
+      return;
+    }
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
     ME = me;
   });
