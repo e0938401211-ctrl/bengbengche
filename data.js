@@ -160,6 +160,36 @@
     };
   }
 
+  // ---------- 路線地圖（Leaflet + OpenStreetMap） ----------
+  // track: [[緯度, 經度], ...]
+  function drawRoute(el, track) {
+    if (!el) return null;
+    if (el._map) { try { el._map.remove(); } catch (e) {} el._map = null; }
+    if (!track || track.length < 2) {
+      el.innerHTML = '<div style="height:100%;display:grid;place-items:center;text-align:center;padding:12px;font-size:13px;color:#5B6560;background:#EEF0EC">這趟沒有 GPS 路線<br>（未開啟定位、訊號不足或使用示範快轉）</div>';
+      return null;
+    }
+    if (!window.L) { el.innerHTML = '<div style="height:100%;display:grid;place-items:center;font-size:13px;color:#5B6560;background:#EEF0EC">地圖載入失敗，請檢查網路</div>'; return null; }
+    el.innerHTML = '';
+    const map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    const line = L.polyline(track, { color: '#2459D6', weight: 5, opacity: 0.9 }).addTo(map);
+    const dot = (p, fill, label) => L.circleMarker(p, { radius: 8, color: '#fff', weight: 3, fillColor: fill, fillOpacity: 1 }).addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
+    dot(track[0], '#121A17', '上車');
+    dot(track[track.length - 1], '#D12A6E', '下車');
+    map.fitBounds(line.getBounds(), { padding: [28, 28] });
+    el._map = map;
+    setTimeout(() => { try { map.invalidateSize(); map.fitBounds(line.getBounds(), { padding: [28, 28] }); } catch (e) {} }, 250);
+    return map;
+  }
+  // 路線點太多時平均抽樣，避免資料過大
+  function thinTrack(track, max) {
+    if (!track || track.length <= max) return track || [];
+    const step = (track.length - 1) / (max - 1), out = [];
+    for (let i = 0; i < max; i++) out.push(track[Math.round(i * step)]);
+    return out;
+  }
+
   let db;
   const cfg = window.BBC_FIREBASE_CONFIG;
   try {
@@ -170,10 +200,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-8',
+    VERSION: '2026.11.03-9',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
-    hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
+    drawRoute, thinTrack, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };

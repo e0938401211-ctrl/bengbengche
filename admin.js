@@ -215,9 +215,11 @@ function renderRides() {
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'pickup' || r.status === 'trip') {
       act = `<span class="t">${r.status === 'pickup' ? '司機前往上車點' : '開始跳表 ' + BBC.hhmm(r.startedAt)}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
+        ${r.status === 'trip' ? `<button class="sbtn" type="button" data-route="${esc(r.id)}">即時路線</button>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'done') {
-      act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(r.finalMin || '')} 分鐘${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>`;
+      act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(Math.round(r.finalMin || 0))} 分鐘 · ${r.distanceSource === 'gps' ? 'GPS 實際里程' : '估算里程'}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
+        <button class="sbtn" type="button" data-route="${esc(r.id)}" style="margin-left:auto">路線與明細</button>`;
     } else {
       act = `<span class="t">取消於 ${BBC.hhmm(r.cancelledAt)}</span>`;
     }
@@ -288,7 +290,7 @@ setInterval(() => { if (ADMIN) { renderKpis(); renderDrivers(); } }, 10000);   /
 
 // ---------- 對話框 ----------
 function modal(html) { $('modalCard').innerHTML = html; $('modal').hidden = false; const f = $('modalCard').querySelector('input,select,button'); if (f) f.focus(); }
-function closeModal() { $('modal').hidden = true; $('modalCard').innerHTML = ''; }
+function closeModal() { const m = $('mMap'); if (m && m._map) { try { m._map.remove(); } catch (e) {} } $('modal').hidden = true; $('modalCard').innerHTML = ''; $('modalCard').style.width = ''; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
 
 $('brands').innerHTML = ['Toyota 豐田', 'Lexus 凌志', 'Honda 本田', 'Nissan 日產', 'Mitsubishi 三菱', 'CMC 中華', 'Mazda 馬自達', 'Subaru 速霸陸', 'Suzuki 鈴木', 'Hyundai 現代', 'Kia 起亞', 'Ford 福特', 'Volkswagen 福斯', 'Škoda', 'Audi 奧迪', 'BMW', 'MINI', 'Mercedes-Benz 賓士', 'Volvo 富豪', 'Porsche 保時捷', 'Tesla 特斯拉', 'Luxgen 納智捷', 'Peugeot 寶獅', 'Citroën 雪鐵龍', 'MG', 'Land Rover', 'Jeep'].map(b => `<option value="${b}">`).join('');
@@ -388,6 +390,29 @@ function setView(v) {
 try { const v = localStorage.getItem('bbc_admin_view'); if (v) setView(v); } catch (e) {}
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 
+function routeDialog(id) {
+  const r = RIDES.find(x => x.id === id); if (!r) return;
+  const done = r.status === 'done';
+  const km = done ? r.finalKm : r.meterKm, fare = done ? r.finalFare : r.meterFare;
+  const L = (k, v) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--soft);font-size:14px"><span class="sub" style="font-size:14px">${k}</span><b style="text-align:right;overflow-wrap:anywhere">${v}</b></div>`;
+  modal(`<h3 id="modalTitle">${done ? '行程路線與明細' : '即時路線'} · ${esc(r.id)}</h3>
+    <div id="mMap" style="height:320px;border-radius:14px;overflow:hidden;background:var(--soft)"></div>
+    <div>
+      ${L('司機', esc(r.driverName || '—') + ' · ' + esc(r.plate || ''))}
+      ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
+      ${L('上車', esc((r.fromArea || '') + ' ' + r.from))}
+      ${L('下車', esc((r.toArea || '') + ' ' + r.to))}
+      ${L('時間', BBC.hhmm(r.startedAt) + ' → ' + (done ? BBC.hhmm(r.doneAt) : '進行中'))}
+      ${L('里程', esc(km != null ? km : 0) + ' 公里（' + (r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
+      ${done ? L('車資明細', `起跳 ${fmt(r.fareBase)} ＋ 里程 ${fmt(r.fareKm)} ＋ 時間 ${fmt(r.fareTime)}${r.minFareTopUp ? ' ＋ 低消補足 ' + fmt(r.minFareTopUp) : ''}`) : ''}
+      ${L(done ? '實收車資' : '目前跳表', 'NT$' + fmt(fare))}
+    </div>
+    ${done ? '' : '<p class="sub">司機 App 每 20 秒同步一次路線，關掉再打開這個視窗可看到最新路線。</p>'}
+    <div class="mrow"><button class="btn dark" type="button" data-close>關閉</button></div>`);
+  $('modalCard').style.width = 'min(640px, 100%)';
+  BBC.drawRoute($('mMap'), r.track);
+}
+
 async function cleanJunk() {
   const list = JUNK.slice();
   if (!list.length) return;
@@ -415,6 +440,7 @@ document.addEventListener('click', e => {
   const tg = t.closest('[data-toggle]'); if (tg) return toggleDriver(tg.dataset.toggle);
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
+  const rt = t.closest('[data-route]'); if (rt) return routeDialog(rt.dataset.route);
   if (t.closest('#addDriverBtn')) return addDriverDialog();
   if (t.closest('#junkBtn')) return cleanJunk();
   if (t.closest('#pwBtn') || t.closest('#bannerPwBtn')) return adminPwDialog();

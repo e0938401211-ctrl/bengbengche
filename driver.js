@@ -58,7 +58,7 @@ let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
 const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
 let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null;
-let M = { rideId: null, min: 0, km: 0, lastPush: 0 }, SPEED = 1;
+let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 }, SPEED = 1;
 
 // ---------- 小工具 ----------
 function toast(msg) {
@@ -115,7 +115,7 @@ function releaseCurrent(old) {
   if (stillMine) return;
   if (old.status === 'cancelled') toast('管理員已取消行程 ' + CUR.id);
   else if (old.status !== 'done') toast('行程 ' + CUR.id + ' 已改派給其他司機');
-  CUR = null; stopCountdown(); stopMeter(); closeChat();
+  CUR = null; stopCountdown(); stopMeter(); stopGPS(); closeChat();
   S.status = ONLINE ? 'searching' : 'offline';
   presence(); render();
 }
@@ -136,26 +136,69 @@ function startRequest() {
   speak('新的派單，' + (CUR ? CUR.from : ''));
 }
 
+// ---------- GPS 實際路線 ----------
+let GEO = { watch: null, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' }, wakeLock = null;
+const r5 = n => Math.round(n * 1e5) / 1e5;
+function startGPS() {
+  if (!CUR) return;
+  if (GEO.rideId !== CUR.id) GEO = { watch: null, rideId: CUR.id, track: (CUR.track || []).slice(), km: CUR.gpsKm || 0, lastT: 0, ok: false, err: '' };
+  if (GEO.watch != null) return;
+  if (!('geolocation' in navigator)) { GEO.err = '這支手機不支援定位'; return; }
+  GEO.watch = navigator.geolocation.watchPosition(onPos, e => {
+    GEO.err = e.code === 1 ? '定位被拒絕：里程改用估算' : '暫時抓不到 GPS，里程先用估算';
+    const s = $('mSrc'); if (s) s.textContent = GEO.err;
+  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
+  keepScreenOn();
+}
+function onPos(p) {
+  const { latitude, longitude, accuracy } = p.coords;
+  if (accuracy > 60) return;                                   // 誤差太大的點不要
+  const pt = [r5(latitude), r5(longitude)];
+  const last = GEO.track[GEO.track.length - 1];
+  if (last) {
+    const d = BBC.distKm(last, pt);
+    if (d < 0.015) return;                                     // 小於 15 公尺視為原地
+    const hrs = GEO.lastT ? (p.timestamp - GEO.lastT) / 3600000 : 0;
+    if (hrs > 0 && d / hrs > 160) return;                      // 時速超過 160 是飄點
+    GEO.km += d;
+  }
+  GEO.track.push(pt); GEO.lastT = p.timestamp; GEO.ok = true; GEO.err = '';
+}
+function stopGPS() {
+  if (GEO.watch != null) { try { navigator.geolocation.clearWatch(GEO.watch); } catch (e) {} }
+  GEO.watch = null;
+  if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+}
+async function keepScreenOn() {   // 行程中讓螢幕保持亮著，iPhone 鎖螢幕後網頁無法繼續記錄 GPS
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && GEO.watch != null) keepScreenOn(); });
+const usingGps = () => SPEED === 1 && GEO.ok && GEO.track.length > 1;
+
 // ---------- 跳表 ----------
 function startMeter() {
   stopMeter();
   if (!CUR) return;
-  if (M.rideId !== CUR.id) M = { rideId: CUR.id, min: CUR.startedAt ? (Date.now() - CUR.startedAt) / 60000 : 0, km: 0, lastPush: 0 };
+  if (M.rideId !== CUR.id) M = { rideId: CUR.id, min: CUR.startedAt ? (Date.now() - CUR.startedAt) / 60000 : 0, km: 0, lastPush: 0, lastTrack: 0 };
+  startGPS();
   const tick = () => {
     if (!CUR) return stopMeter();
     M.min += SPEED / 60;
     const est = CUR.km || 3, mins = CUR.mins || 10;
-    M.km = Math.min(est, est * M.min / mins);       // 沒有 GPS：里程依預估距離隨時間累加
+    M.km = usingGps() ? GEO.km : Math.min(est, est * M.min / mins);   // 有 GPS 用實際里程，沒有就依預估距離隨時間累加
     const f = $('mFare');
     if (f) {
       f.textContent = fmt(meterFare());
       $('mKm').textContent = M.km.toFixed(1);
       $('mMin').textContent = Math.floor(M.min);
       $('mStat').textContent = M.min >= mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(mins - M.min)) + ' 分鐘';
+      $('mSrc').textContent = srcText();
     }
     if (Date.now() - M.lastPush > 5000) {           // 每 5 秒回報一次跳表金額給管理平台
       M.lastPush = Date.now();
-      db.set('rides', CUR.id, { meterFare: meterFare(), meterKm: Math.round(M.km * 10) / 10, meterMin: Math.floor(M.min) }).catch(() => {});
+      const up = { meterFare: meterFare(), meterKm: Math.round(M.km * 10) / 10, meterMin: Math.floor(M.min), gpsKm: Math.round(GEO.km * 100) / 100 };
+      if (Date.now() - M.lastTrack > 20000 && GEO.track.length > 1) { M.lastTrack = Date.now(); up.track = BBC.thinTrack(GEO.track, 800); }   // 每 20 秒同步路線，管理平台可即時看
+      db.set('rides', CUR.id, up).catch(() => {});
     }
   };
   tick();
@@ -185,14 +228,15 @@ const A = {
   arrive() {
     if (!CUR) return;
     const now = Date.now();
-    CUR.startedAt = now; M = { rideId: CUR.id, min: 0, km: 0, lastPush: 0 };
+    CUR.startedAt = now; CUR.track = []; CUR.gpsKm = 0; M = { rideId: CUR.id, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
+    GEO = { watch: null, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' };
     S.status = 'trip';
     db.set('rides', CUR.id, { status: 'trip', startedAt: now, meterFare: BBC.RATE.base }).catch(fail);
     startMeter(); render();
   },
   complete() {
     if (!CUR) return;
-    stopMeter(); closeChat();
+    stopMeter(); stopGPS(); closeChat();
     const rec = buildRecord(CUR, M.km, M.min);
     Object.assign(CUR, rec);
     S.status = 'done';
@@ -206,6 +250,11 @@ const A = {
   speed() { SPEED = SPEED === 1 ? 20 : 1; toast(SPEED === 1 ? '跳表恢復正常速度' : '示範快轉：跳表速度 ×20'); render(); }
 };
 const meterAmount = () => meterFare();
+function srcText() {
+  if (SPEED !== 1) return '示範快轉中：里程為估算';
+  if (usingGps()) return 'GPS 記錄中 · 已記錄 ' + GEO.track.length + ' 個點';
+  return GEO.err || '等待 GPS 訊號…（請保持螢幕亮著）';
+}
 
 // ---------- 行程完整紀錄 ----------
 let HF = 'today';   // 行程紀錄篩選：today | week | all
@@ -221,6 +270,8 @@ function buildRecord(r, km, min) {
     fareBase: R.base, fareKm: Math.round(km * R.perKm), fareTime: Math.round(min * R.perMin),
     meterFare: meter, minFareTopUp: Math.max(0, fare - meter), finalFare: fare,
     rate: { base: R.base, perKm: R.perKm, perMin: R.perMin, min: R.min },
+    track: BBC.thinTrack(GEO.rideId === r.id ? GEO.track : (r.track || []), 1500), gpsKm: Math.round((GEO.rideId === r.id ? GEO.km : (r.gpsKm || 0)) * 100) / 100,
+    distanceSource: usingGps() ? 'gps' : 'estimate',
     driverName: ME.name, driverPhone: ME.phone, plate: ME.plate || '',
     car: [ME.brand, ME.model].filter(Boolean).join(' '), carColor: ME.color || '', service: ME.service || ''
   };
@@ -253,7 +304,7 @@ function retryPending() {
   Object.keys(p).forEach(id => db.set('rides', id, p[id]).then(() => markPending(id, p[id], false)).catch(() => {}));
 }
 const dt = t => t ? new Date(t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
-function receiptHTML(r) {
+function receiptHTML(r, mapId) {
   const km = r.finalKm != null ? r.finalKm : 0, min = r.finalMin != null ? r.finalMin : 0;
   const base = r.fareBase != null ? r.fareBase : BBC.RATE.base;
   const kmFee = r.fareKm != null ? r.fareKm : Math.round(km * BBC.RATE.perKm);
@@ -262,6 +313,7 @@ function receiptHTML(r) {
   const top = r.minFareTopUp != null ? r.minFareTopUp : Math.max(0, (r.finalFare || 0) - meter);
   const L = (k, v) => `<div class="line" style="padding:9px 0"><span class="sub" style="font-size:14px">${k}</span><b style="text-align:right;max-width:65%;overflow-wrap:anywhere">${v}</b></div>`;
   return `<div class="panel" style="padding:4px 14px;background:var(--page)">
+    ${mapId ? `<div id="${mapId}" style="height:210px;border-radius:12px;overflow:hidden;margin:10px 0 4px;background:#EEF0EC"></div>` : ''}
     ${L('行程編號', esc(r.id))}
     ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
     ${L('上車', esc((r.fromArea || '') + ' ' + (r.from || '')))}
@@ -270,6 +322,7 @@ function receiptHTML(r) {
     ${L('開始跳表', dt(r.startedAt))}
     ${L('結束', dt(r.doneAt))}
     ${L('里程／時間', esc(km) + ' 公里 · ' + esc(Math.round(min)) + ' 分鐘')}
+    ${L('里程來源', r.distanceSource === 'gps' ? 'GPS 實際行駛' : '依路線估算')}
     ${L('起跳', 'NT$' + fmt(base))}
     ${L('里程費（每公里 ' + BBC.RATE.perKm + '）', 'NT$' + fmt(kmFee))}
     ${L('時間費（每分鐘 ' + BBC.RATE.perMin + '）', 'NT$' + fmt(tFee))}
@@ -299,9 +352,10 @@ function historyHTML() {
 function openTrip(id) {
   const r = myDone().find(x => x.id === id);
   if (!r) return;
-  $('tdBody').innerHTML = receiptHTML(r);
+  $('tdBody').innerHTML = receiptHTML(r, 'tdMap');
   $('tdState').textContent = local.get(pendingKey(), {})[id] ? '已存在手機，等待上傳雲端' : '已儲存到雲端';
   $('tripDetail').hidden = false;
+  BBC.drawRoute($('tdMap'), r.track);
 }
 
 // ---------- 畫面 ----------
@@ -339,6 +393,7 @@ function sheetHTML() {
         <div class="meter-top"><span>蹦蹦車跳表</span><span class="live">計費中</span></div>
         <div class="meter-fare">NT$<span id="mFare">${fmt(meterFare())}</span></div>
         <div class="meter-sub"><span id="mKm">${M.km.toFixed(1)}</span> 公里 · <span id="mMin">${Math.floor(M.min)}</span> 分鐘</div>
+        <div class="meter-rate" id="mSrc">${srcText()}</div>
         <div class="meter-rate">起跳 50 · 每公里 20 · 每分鐘 2 · 最低 100</div>
       </div>
       <div class="row"><p class="sub">乘客：${esc(r.riderName || '乘客')}</p>
@@ -350,7 +405,7 @@ function sheetHTML() {
       <div class="row"><div style="display:flex;align-items:center;gap:10px"><div class="check" style="width:36px;height:36px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><p class="h2">行程完成</p></div>
         <span class="kicker" id="saveState">${saveStateText(r.id)}</span></div>
       <p class="sub" style="margin-top:-4px">請向乘客收取 <b style="color:var(--ink);font-size:18px">NT$${fmt(r.finalFare)}</b>　今日累計 NT$${fmt(todayStats().sum)} · ${todayStats().count} 趟</p>
-      <div style="overflow-y:auto;min-height:0;flex:1 1 auto;margin-inline:-4px;padding-inline:4px">${receiptHTML(r)}</div>
+      <div style="overflow-y:auto;min-height:0;flex:1 1 auto;margin-inline:-4px;padding-inline:4px">${receiptHTML(r, 'doneMap')}</div>
       <button class="btn" style="background:var(--purple);flex-shrink:0" data-a="next">${ONLINE ? '繼續接單' : '完成'}</button></div>`;
   }
   return '';
@@ -414,6 +469,7 @@ function render() {
     const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + SPEED;
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
+    if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track);
   } else if (ME) $('earn').innerHTML = earnHTML();
 }
 
