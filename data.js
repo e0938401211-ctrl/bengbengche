@@ -164,7 +164,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-4',
+    VERSION: '2026.11.03-5',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
     hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, ONLINE_STALE_MS,

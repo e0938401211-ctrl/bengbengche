@@ -84,7 +84,8 @@ function startHeartbeat() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ME && ONLINE) presence(); });
 
 // ---------- 即時接收行程 ----------
-function onRides(list) {
+function onRides(list, meta) {
+  if (meta && meta.fromCache) return;   // 只相信雲端回來的資料，手機暫存的可能不完整
   RIDES = list;
   if (!ME) return;
   const mine = list
@@ -94,12 +95,8 @@ function onRides(list) {
 
   if (CUR && (!r || r.id !== CUR.id) && S.status !== 'done') {
     const old = list.find(x => x.id === CUR.id);
-    if (old && old.status === 'cancelled') toast('管理員已取消行程 ' + CUR.id);
-    else if (old && old.status === 'done') { /* 已完成 */ }
-    else toast('行程 ' + CUR.id + ' 已改派給其他司機');
-    CUR = null; stopCountdown(); stopMeter(); closeChat();
-    S.status = ONLINE ? 'searching' : 'offline';
-    presence();
+    if (!old) { verifyCurrent(CUR.id); render(); return; }   // 清單裡暫時沒有，向雲端確認後再決定
+    releaseCurrent(old);
   }
   if (r && S.status !== 'done') {
     CUR = r;
@@ -107,8 +104,23 @@ function onRides(list) {
     else if (r.status === 'pickup') S.status = 'pickup';
     else if (r.status === 'trip') { S.status = 'trip'; if (!meterT) startMeter(); }
     if (r.status !== 'assigned') stopCountdown();
+    ONLINE = true;
   }
   render();
+}
+// 行程真的被取消或改派時，才讓司機回到等待派單
+function releaseCurrent(old) {
+  if (!CUR || old.id !== CUR.id) return;
+  const stillMine = old.driverPhone === ME.phone && ['assigned', 'pickup', 'trip'].includes(old.status);
+  if (stillMine) return;
+  if (old.status === 'cancelled') toast('管理員已取消行程 ' + CUR.id);
+  else if (old.status !== 'done') toast('行程 ' + CUR.id + ' 已改派給其他司機');
+  CUR = null; stopCountdown(); stopMeter(); closeChat();
+  S.status = ONLINE ? 'searching' : 'offline';
+  presence(); render();
+}
+function verifyCurrent(id) {
+  db.get('rides', id).then(r => { if (r) releaseCurrent(r); }).catch(() => {});
 }
 
 function startRequest() {
