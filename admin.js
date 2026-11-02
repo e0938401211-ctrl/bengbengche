@@ -51,7 +51,8 @@ function enter(a) {
   $('loginView').hidden = true; $('appView').hidden = false;
   $('whoText').textContent = a.name || a.id;
   $('defaultPwBanner').hidden = !a.isDefaultPw;
-  $('localBanner').hidden = BBC.mode === 'cloud';
+  let dismissed = false; try { dismissed = sessionStorage.getItem('bbc_hide_localBanner') === '1'; } catch (e) {}
+  $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
   unsub.push(db.watch('rides', l => { RIDES = l; renderAll(); }));
   unsub.push(db.watch('drivers', l => { DRIVERS = l; renderAll(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
@@ -134,6 +135,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     toast(drv ? `行程 ${id} 已派給 ${drv.name}` : `行程 ${id} 已建立，放在待派單`);
     ['d-rider', 'd-phone', 'd-from', 'd-to', 'd-note', 'd-km'].forEach(i => { $(i).value = ''; });
     updateEstimate();
+    if (isMobile()) { rideFilter = 'active'; setView('rides'); renderRides(); }
   } catch (x) { fail(x); err.textContent = '建立失敗，請再試一次'; }
 });
 
@@ -166,7 +168,9 @@ function renderKpis() {
   const doneToday = RIDES.filter(r => r.status === 'done' && (r.doneAt || 0) >= t0);
   $('k-online').textContent = DRIVERS.filter(d => state(d) === 'online').length;
   $('k-busy').textContent = DRIVERS.filter(d => state(d) === 'busy').length;
-  $('k-pending').textContent = RIDES.filter(r => r.status === 'pending').length;
+  const pend = RIDES.filter(r => r.status === 'pending').length;
+  $('k-pending').textContent = pend;
+  $('tb-rides').hidden = !pend; $('tb-rides').textContent = pend;
   $('k-done').textContent = doneToday.length;
   $('k-rev').textContent = 'NT$' + fmt(doneToday.reduce((a, r) => a + (r.finalFare || 0), 0));
   $('modeBadge').className = 'mode ' + BBC.mode;
@@ -188,7 +192,7 @@ function renderRides() {
   const order = { pending: 0, assigned: 1, pickup: 2, trip: 3, done: 4, cancelled: 5 };
   const list = RIDES.filter(fn).sort((a, b) => (order[a.status] - order[b.status]) || ((b.createdAt || 0) - (a.createdAt || 0))).slice(0, 100);
   if (!list.length) {
-    $('rideList').innerHTML = `<div class="empty">${rideFilter === 'active' ? '目前沒有進行中的行程。用左邊的表單建立一筆，或等司機手動輸入。' : '沒有符合的行程'}</div>`;
+    $('rideList').innerHTML = `<div class="empty">${rideFilter === 'active' ? '目前沒有進行中的行程。用「派單」建立一筆，或等司機手動輸入。' : '沒有符合的行程'}</div>`;
     return;
   }
   // 保留使用者正在選的司機下拉，避免即時更新把選擇洗掉
@@ -255,15 +259,15 @@ function renderDrivers() {
     const cur = RIDES.find(r => r.driverPhone === d.id && ['assigned', 'pickup', 'trip'].includes(r.status));
     const done = RIDES.filter(r => r.driverPhone === d.id && r.status === 'done' && (r.doneAt || 0) >= t0);
     return `<tr>
-      <td><div class="name">${esc(d.name)}</div><div class="small">${esc(d.id)}</div></td>
-      <td><div>${esc(d.plate || '—')}</div><div class="small">${esc([d.brand, d.model].filter(Boolean).join(' ') || '—')}${d.color ? ' · ' + esc(d.color) : ''}</div></td>
-      <td><div class="small" style="color:var(--ink)">${esc(d.service || '—')}</div><div class="small">${esc(d.seats || '')}</div></td>
-      <td><span class="pill p-${st}">${DRIVER_TEXT[st]}</span></td>
-      <td>${esc(d.area || '—')}</td>
-      <td>${cur ? `<div class="name" style="font-weight:500">${esc(cur.id)} · ${STATUS_TEXT[cur.status]}</div><div class="small">${esc(cur.from)} → ${esc(cur.to)}</div>` : '<span class="small">—</span>'}</td>
-      <td class="num">${done.length} 趟<div class="small">NT$${fmt(done.reduce((a, r) => a + (r.finalFare || 0), 0))}</div></td>
-      <td class="num small">${BBC.ago(d.lastSeen)}</td>
-      <td><div class="rowact">
+      <td data-label="司機"><div class="name">${esc(d.name)}</div><div class="small">${esc(d.id)}</div></td>
+      <td data-label="車輛"><div>${esc(d.plate || '—')}</div><div class="small">${esc([d.brand, d.model].filter(Boolean).join(' ') || '—')}${d.color ? ' · ' + esc(d.color) : ''}</div></td>
+      <td data-label="服務類型"><div class="small" style="color:var(--ink)">${esc(d.service || '—')}</div><div class="small">${esc(d.seats || '')}</div></td>
+      <td data-label="狀態"><span class="pill p-${st}">${DRIVER_TEXT[st]}</span></td>
+      <td data-label="所在區">${esc(d.area || '—')}</td>
+      <td data-label="目前行程">${cur ? `<div class="name" style="font-weight:500">${esc(cur.id)} · ${STATUS_TEXT[cur.status]}</div><div class="small">${esc(cur.from)} → ${esc(cur.to)}</div>` : '<span class="small">—</span>'}</td>
+      <td data-label="今日" class="num">${done.length} 趟<div class="small">NT$${fmt(done.reduce((a, r) => a + (r.finalFare || 0), 0))}</div></td>
+      <td data-label="最後回報" class="num small">${BBC.ago(d.lastSeen)}</td>
+      <td data-label="帳號管理"><div class="rowact">
         <button class="sbtn" type="button" data-toggle="${esc(d.id)}">${d.active === false ? '啟用' : '停用'}</button>
         <button class="sbtn" type="button" data-resetpw="${esc(d.id)}">重設密碼</button>
         <button class="sbtn danger" type="button" data-deldrv="${esc(d.id)}">刪除</button>
@@ -371,10 +375,24 @@ function adminPwDialog() {
   });
 }
 
+// ---------- 手機分頁 ----------
+function setView(v) {
+  $('main').dataset.view = v;
+  document.querySelectorAll('[data-mt]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mt === v));
+  try { localStorage.setItem('bbc_admin_view', v); } catch (e) {}
+  window.scrollTo(0, 0);
+}
+try { const v = localStorage.getItem('bbc_admin_view'); if (v) setView(v); } catch (e) {}
+const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+
 // ---------- 點擊 ----------
 document.addEventListener('click', e => {
   const t = e.target;
   if (t.closest('[data-close]') || t.id === 'modal') return closeModal();
+  const dm = t.closest('[data-dismiss]');
+  if (dm) { $(dm.dataset.dismiss).hidden = true; try { sessionStorage.setItem('bbc_hide_' + dm.dataset.dismiss, '1'); } catch (e) {} return; }
+  const mt = t.closest('[data-mt]');
+  if (mt) { setView(mt.dataset.mt); return; }
   const rf = t.closest('[data-rf]'); if (rf) { rideFilter = rf.dataset.rf; return renderRides(); }
   const df = t.closest('[data-df]'); if (df) { driverFilter = df.dataset.df; return renderDrivers(); }
   const as = t.closest('[data-assign]');
