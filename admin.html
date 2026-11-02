@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>蹦蹦車 管理平台</title>
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<style>
+/* Layout: dispatch console — KPI strip on top, dispatch form beside the live trip board, driver table below. One committed light look matching the driver app. */
+:root {
+  --bg: #F3F4F1; --surface: #FFFFFF; --ink: #121A17; --muted: #5B6560; --line: #DDE2DC; --soft: #EEF0EC;
+  --pink: #D12A6E; --blue: #2459D6; --purple: #7B3FD1; --orange: #C2410C; --green: #1F7A34; --red: #B3261E; --grey: #6B7570; --yellow: #FFC93C;
+  --font: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.wrap { max-width: 1440px; margin: 0 auto; padding-block: 20px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 18px; }
+
+/* header */
+header.top { background: var(--ink); color: #fff; }
+header.top .in { max-width: 1440px; margin: 0 auto; padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 900; font-size: 20px; letter-spacing: 1px; }
+.tile { width: 34px; height: 34px; border-radius: 10px; background: conic-gradient(var(--pink) 0 25%, #E8590C 0 50%, var(--yellow) 0 75%, var(--blue) 0); display: grid; place-items: center; color: #fff; font-size: 17px; font-weight: 900; }
+.brand small { font-size: 13px; font-weight: 500; letter-spacing: 0; color: #C9D2CD; }
+.mode { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+.mode.cloud { background: #DDF3E3; color: #145A26; }
+.mode.local { background: #FFE9C2; color: #7A4100; }
+.spacer { flex: 1; }
+.hbtn { height: 36px; padding: 0 14px; border-radius: 18px; background: rgba(255,255,255,.12); color: #fff; font-size: 14px; font-weight: 500; }
+.hbtn:hover { background: rgba(255,255,255,.2); }
+.who { font-size: 14px; color: #C9D2CD; }
+
+/* banner */
+.banner { background: #FFF4DB; border: 1px solid #F0D9A0; color: #5C3B00; border-radius: 14px; padding: 12px 16px; font-size: 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.banner b { font-weight: 700; }
+
+/* KPI */
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); }
+.kpi span { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.kpi b { font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* layout */
+.cols { display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.box h2 { margin: 0; font-size: 18px; font-weight: 700; text-wrap: balance; }
+.boxhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.boxhead .sub { margin-left: auto; }
+.sub { font-size: 13px; color: var(--muted); margin: 0; }
+
+/* form */
+.form { display: flex; flex-direction: column; gap: 12px; }
+.f2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 130px); gap: 8px; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field label { font-size: 13px; font-weight: 500; color: var(--muted); }
+.field input, .field select, .field textarea { height: 42px; border: 1.5px solid var(--line); border-radius: 10px; padding: 0 12px; background: #fff; width: 100%; min-width: 0; }
+.field textarea { height: 64px; padding: 8px 12px; resize: vertical; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--blue); }
+.est { background: var(--soft); border-radius: 10px; padding: 10px 12px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.est b { font-size: 18px; }
+.err { color: var(--red); font-size: 14px; min-height: 20px; margin: 0; }
+.ok { color: var(--green); }
+.btn { height: 46px; border-radius: 23px; background: var(--pink); color: #fff; font-weight: 700; font-size: 16px; padding: 0 20px; }
+.btn.blue { background: var(--blue); }
+.btn.dark { background: var(--ink); }
+.btn.red { background: var(--red); }
+.btn:hover { filter: brightness(1.08); }
+.sbtn { height: 32px; padding: 0 12px; border-radius: 16px; border: 1.5px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.sbtn:hover { border-color: var(--ink); }
+.sbtn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.sbtn.danger { color: var(--red); }
+.sbtn.danger:hover { border-color: var(--red); }
+
+/* chips */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { height: 32px; padding: 0 12px; border-radius: 16px; background: var(--soft); font-size: 13px; font-weight: 700; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.chip[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.chip i { font-style: normal; font-variant-numeric: tabular-nums; opacity: .8; }
+
+/* status pills */
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.p-pending { background: #FFEBD9; color: #9A3412; }
+.p-assigned { background: #F1E8FF; color: #5B2BA8; }
+.p-pickup { background: #E2EAFF; color: #1E46B3; }
+.p-trip { background: #E2EAFF; color: #1E46B3; }
+.p-done { background: #DDF3E3; color: #145A26; }
+.p-cancelled { background: #EEF0EC; color: #5B6560; }
+.p-online { background: #DDF3E3; color: #145A26; }
+.p-busy { background: #E2EAFF; color: #1E46B3; }
+.p-offline { background: #EEF0EC; color: #5B6560; }
+.p-lost { background: #FDE4E2; color: #9B1C14; }
+.p-disabled { background: #EEF0EC; color: #8A928E; text-decoration: line-through; }
+
+/* rides */
+.rides { display: flex; flex-direction: column; gap: 10px; }
+.ride { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; grid-template-columns: 112px minmax(0, 1.5fr) minmax(0, 1fr) 150px; gap: 6px 14px; align-items: start; }
+.ride.st-pending { border-color: #F2C49B; background: #FFFAF5; }
+.ride .no { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ride .t { font-size: 12px; color: var(--muted); }
+.route { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.route div { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.route em { font-style: normal; font-size: 11px; font-weight: 700; color: #fff; background: var(--ink); border-radius: 4px; padding: 0 5px; flex-shrink: 0; }
+.route em.to { background: var(--pink); }
+.route span { overflow-wrap: anywhere; }
+.who2 { font-size: 13px; color: var(--muted); }
+.money { text-align: right; font-variant-numeric: tabular-nums; }
+.money b { font-size: 20px; display: block; }
+.actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px dashed var(--line); padding-top: 10px; }
+.actions select { height: 32px; border: 1.5px solid var(--line); border-radius: 16px; padding: 0 10px; font-size: 13px; max-width: 100%; background: #fff; }
+.empty { text-align: center; color: var(--muted); padding: 28px 12px; border: 1.5px dashed var(--line); border-radius: 14px; }
+
+/* drivers table */
+.tablebox { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 980px; }
+th, td { text-align: left; padding: 10px 10px; border-bottom: 1px solid var(--soft); vertical-align: middle; font-size: 14px; }
+th { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .name { font-weight: 700; }
+td .small { font-size: 12px; color: var(--muted); }
+.rowact { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* login */
+.login { min-height: 100vh; display: grid; place-items: center; padding-inline: max(16px, env(safe-area-inset-left, 0px)); }
+.login .card { width: min(420px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 28px 24px; display: flex; flex-direction: column; gap: 16px; }
+.login .brand { color: var(--ink); justify-content: center; font-size: 24px; }
+
+/* modal */
+.modal { position: fixed; inset: 0; background: rgba(18,26,23,.5); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal .card { width: min(460px, 100%); max-height: 92vh; overflow-y: auto; background: var(--surface); border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.modal h3 { margin: 0; font-size: 18px; }
+.mrow { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 14px; z-index: 60; font-weight: 500; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: calc(100% - 32px); }
+
+@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 960px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ride { grid-template-columns: minmax(0, 1fr) auto; }
+  .ride .route, .ride .who2 { grid-column: 1 / -1; }
+  .money { grid-column: 2; grid-row: 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- 登入 -->
+<section class="login" id="loginView" hidden>
+  <form class="card" id="loginForm" novalidate>
+    <div class="brand"><span class="tile">蹦</span>蹦蹦車 <small>管理平台</small></div>
+    <div class="field"><label for="l-user">管理員帳號</label><input id="l-user" autocomplete="username" placeholder="admin"></div>
+    <div class="field"><label for="l-pw">密碼</label><input id="l-pw" type="password" autocomplete="current-password"></div>
+    <p class="err" id="loginErr" role="alert"></p>
+    <button class="btn dark" type="submit">登入管理平台</button>
+    <p class="sub" id="loginHint"></p>
+  </form>
+</section>
+
+<!-- 主畫面 -->
+<div id="appView" hidden>
+  <header class="top"><div class="in">
+    <div class="brand"><span class="tile">蹦</span>蹦蹦車 <small>管理平台</small></div>
+    <span class="mode" id="modeBadge"></span>
+    <span class="spacer"></span>
+    <span class="who" id="whoText"></span>
+    <button class="hbtn" id="pwBtn" type="button">修改密碼</button>
+    <button class="hbtn" id="logoutBtn" type="button">登出</button>
+  </div></header>
+
+  <main class="wrap">
+    <div class="banner" id="defaultPwBanner" hidden><b>你正在使用預設密碼。</b>請先修改管理員密碼，避免別人登入。<button class="sbtn" type="button" id="bannerPwBtn">立即修改</button></div>
+    <div class="banner" id="localBanner" hidden><b>示範模式：</b>還沒設定 Firebase，資料只存在這個瀏覽器。在同一個瀏覽器另開分頁打開司機 App（index.html）就能互相連動。要讓不同手機連線，請依照說明填好 config.js。</div>
+
+    <section class="kpis" aria-label="即時概況">
+      <div class="kpi"><span><i class="sw" style="background:var(--green)"></i>線上空車</span><b id="k-online">0</b></div>
+      <div class="kpi"><span><i class="sw" style="background:var(--blue)"></i>載客中</span><b id="k-busy">0</b></div>
+      <div class="kpi"><span><i class="sw" style="background:var(--orange)"></i>待派單</span><b id="k-pending">0</b></div>
+      <div class="kpi"><span><i class="sw" style="background:var(--purple)"></i>今日完成</span><b id="k-done">0</b></div>
+      <div class="kpi"><span><i class="sw" style="background:var(--pink)"></i>今日營收</span><b id="k-rev">NT$0</b></div>
+    </section>
+
+    <div class="cols">
+      <!-- 派單 -->
+      <section class="box" aria-labelledby="dispatchTitle">
+        <h2 id="dispatchTitle">手動派單</h2>
+        <form class="form" id="dispatchForm" novalidate>
+          <div class="f2">
+            <div class="field"><label for="d-rider">乘客稱呼</label><input id="d-rider" placeholder="陳小姐" autocomplete="off"></div>
+            <div class="field"><label for="d-phone">乘客電話</label><input id="d-phone" type="tel" inputmode="tel" placeholder="可不填" autocomplete="off"></div>
+          </div>
+          <div class="f2">
+            <div class="field"><label for="d-from">上車地址</label><input id="d-from" list="spots" placeholder="高雄車站、中正四路 211 號" autocomplete="off"></div>
+            <div class="field"><label for="d-from-area">行政區</label><select id="d-from-area"></select></div>
+          </div>
+          <div class="f2">
+            <div class="field"><label for="d-to">下車地址</label><input id="d-to" list="spots" placeholder="高雄國際機場" autocomplete="off"></div>
+            <div class="field"><label for="d-to-area">行政區</label><select id="d-to-area"></select></div>
+          </div>
+          <div class="f2">
+            <div class="field"><label for="d-note">備註</label><input id="d-note" placeholder="例如 2 件行李、帶寵物" autocomplete="off"></div>
+            <div class="field"><label for="d-km">公里數</label><input id="d-km" type="number" inputmode="decimal" min="0.5" step="0.1" placeholder="自動估算"></div>
+          </div>
+          <div class="est" id="estBox" aria-live="polite"><span>填好上下車地址後會顯示預估</span></div>
+          <div class="field"><label for="d-driver">指派司機</label><select id="d-driver"></select></div>
+          <p class="err" id="dispatchErr" role="alert"></p>
+          <button class="btn" type="submit">建立行程</button>
+        </form>
+      </section>
+
+      <!-- 行程 -->
+      <section class="box" aria-labelledby="ridesTitle">
+        <div class="boxhead"><h2 id="ridesTitle">行程</h2><div class="chips" id="rideFilters" role="group" aria-label="篩選行程"></div></div>
+        <div class="rides" id="rideList"></div>
+      </section>
+    </div>
+
+    <!-- 司機 -->
+    <section class="box" aria-labelledby="driversTitle">
+      <div class="boxhead"><h2 id="driversTitle">司機動態</h2><div class="chips" id="driverFilters" role="group" aria-label="篩選司機"></div>
+        <button class="sbtn primary" type="button" id="addDriverBtn" style="margin-left:auto">＋ 新增司機帳號</button></div>
+      <div class="tablebox"><table>
+        <thead><tr><th>司機</th><th>車輛</th><th>服務類型</th><th>狀態</th><th>所在區</th><th>目前行程</th><th>今日</th><th>最後回報</th><th>帳號管理</th></tr></thead>
+        <tbody id="driverRows"></tbody>
+      </table></div>
+      <p class="sub">司機 App 每 30 秒回報一次；超過 90 秒沒有回報會顯示「斷線」。</p>
+    </section>
+  </main>
+</div>
+
+<datalist id="spots"></datalist>
+<datalist id="brands"></datalist>
+
+<!-- 對話框 -->
+<div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
+<script src="data.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
