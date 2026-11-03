@@ -453,7 +453,7 @@ function openTrip(id) {
   $('tdBody').innerHTML = receiptHTML(r, 'tdMap');
   $('tdState').textContent = local.get(pendingKey(), {})[id] ? '已存在手機，等待上傳雲端' : '已儲存到雲端';
   $('tripDetail').hidden = false;
-  BBC.drawRoute($('tdMap'), r.track);
+  BBC.drawRoute($('tdMap'), r.track, { fallback: BBC.locate(r.from || '', r.fromArea || '').c });
 }
 
 // ---------- 點數（儲值與回金） ----------
@@ -597,7 +597,7 @@ function render() {
     const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread;
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
-    if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track);
+    if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.locate(CUR.from || '', CUR.fromArea || '').c });
   } else if (ME && S.tab === 'earn') $('earn').innerHTML = earnHTML();
   else if (ME && S.tab === 'points') $('points').innerHTML = pointsHTML();
 }

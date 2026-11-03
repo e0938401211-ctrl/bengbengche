@@ -252,7 +252,13 @@
     opts = opts || {};
     track = track || [];
     const cur = opts.current && opts.current[0] != null ? opts.current : null;
-    const enough = track.length >= 2 || (opts.live && (track.length || cur));
+    // 行程已結束但路線不到兩個點（沒移動或沒有 GPS）：改標示單一位置，不要整塊灰色
+    let single = null, singleNote = '';
+    if (!opts.live && track.length < 2) {
+      if (track.length === 1) { single = track[0]; singleNote = '這趟沒有移動，只顯示 GPS 位置'; }
+      else if (opts.fallback) { single = opts.fallback; singleNote = '這趟沒有 GPS 紀錄，顯示上車地址的大約位置'; }
+    }
+    const enough = track.length >= 2 || single || (opts.live && (track.length || cur));
     const reset = () => { if (el._map) { try { el._map.remove(); } catch (e) {} } el._map = null; el._st = null; };
     if (!enough) {
       reset();
@@ -279,15 +285,16 @@
       if (!st.line) { st.casing = L.polyline(track, { color: '#fff', weight: 11, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map); st.line = L.polyline(track, { color: ROUTE_RED, weight: 7, opacity: 0.85, lineJoin: 'round', lineCap: 'round' }).addTo(map); }
       else { st.casing.setLatLngs(track); st.line.setLatLngs(track); }
     }
-    if (track.length) { if (!st.a) st.a = pin(track[0], '上車'); else st.a.setLatLng(track[0]); }
+    if (single) { if (!st.a) st.a = pin(single, '上車'); else st.a.setLatLng(single); }
+    else if (track.length) { if (!st.a) st.a = pin(track[0], '上車'); else st.a.setLatLng(track[0]); }
     if (!opts.live && track.length >= 2) { if (!st.b) st.b = pin(track[track.length - 1], '下車'); else st.b.setLatLng(track[track.length - 1]); }
     const carPos = opts.live ? (cur || track[track.length - 1]) : null;
     if (carPos) { if (!st.car) st.car = L.circleMarker(carPos, { radius: 9, color: '#fff', weight: 3, fillColor: '#2459D6', fillOpacity: 1 }).addTo(map).bindTooltip('司機目前位置', { permanent: true, direction: 'top', offset: [0, -8] }); else st.car.setLatLng(carPos); }
     if (st.noteEl) {
-      const msg = opts.live && track.length < 2 ? '司機還沒移動，開始移動後會畫出路線' : opts.live ? '每 8 秒自動更新' : '';
+      const msg = single ? singleNote : opts.live && track.length < 2 ? '司機還沒移動，開始移動後會畫出路線' : opts.live ? '每 3 秒自動更新' : '';
       st.noteEl.textContent = msg; st.noteEl.style.display = msg ? '' : 'none';
     }
-    const pts = track.slice(); if (carPos) pts.push(carPos);
+    const pts = single ? [single] : track.slice(); if (carPos) pts.push(carPos);
     const fit = () => { if (pts.length >= 2) map.fitBounds(L.latLngBounds(pts), { padding: [32, 32], maxZoom: 17 }); else map.setView(pts[0], 16); };
     if (!st.fitted) { st.fitted = true; fit(); setTimeout(() => { try { map.invalidateSize(); fit(); } catch (e) {} }, 250); }
     return map;
@@ -310,7 +317,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-16',
+    VERSION: '2026.11.03-17',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,

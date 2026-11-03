@@ -433,7 +433,7 @@ function routeDialog(id) {
     const rr = RIDES.find(x => x.id === id) || r;
     const live = rr.status === 'trip' || rr.status === 'pickup';
     const dv = DRIVERS.find(x => x.id === rr.driverPhone);
-    BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null });
+    BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null, fallback: BBC.locate(rr.from || '', rr.fromArea || '').c });
     const sum = $('mSum');
     const lv = liveMeter(rr);
     if (sum) sum.innerHTML = live ? BBC.tripSummaryHTML(lv.fare, lv.min, lv.km, lv.stale ? '司機 App 未回報（' + BBC.ago(rr.meterAt) + '）' : '跳表中 · 即時同步') : BBC.tripSummaryHTML(rr.finalFare, rr.finalMin, rr.finalKm, '實收車資');
