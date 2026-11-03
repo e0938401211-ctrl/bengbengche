@@ -80,6 +80,10 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .fare { font-size: 40px; font-weight: 900; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
 .stop { display: flex; gap: 12px; align-items: flex-start; }
 .dot { width: 10px; height: 10px; margin-top: 7px; flex-shrink: 0; }
+.nobtn { height: 56px; padding: 0 20px; border-radius: 28px; border: 1.5px solid #E5352B; background: transparent; color: #fff; display: flex; align-items: center; gap: 6px; font-size: 17px; font-weight: 700; flex-shrink: 0; }
+.whyno { display: flex; flex-direction: column; gap: 10px; }
+.whygrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.whygrid button { min-height: 48px; border-radius: 14px; background: #2D3833; color: #fff; font-size: 15px; font-weight: 700; padding: 6px 8px; border: 1.5px solid #E5352B; }
 .decline { width: 56px; height: 56px; border-radius: 50%; border: 1.5px solid var(--grey); background: transparent; display: grid; place-items: center; flex-shrink: 0; }
 .avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--ground); display: grid; place-items: center; font-weight: 700; flex-shrink: 0; }
 .check { width: 52px; height: 52px; border-radius: 50%; background: var(--green); display: grid; place-items: center; }
@@ -288,11 +292,11 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
 
-<script src="config.js?v=202611032121"></script>
+<script src="config.js?v=202611032208"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="data.js?v=202611032121"></script>
-<script src="driver.js?v=202611032121"></script>
+<script src="data.js?v=202611032208"></script>
+<script src="driver.js?v=202611032208"></script>
 </body>
 </html>

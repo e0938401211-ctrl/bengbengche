@@ -127,11 +127,11 @@ function verifyCurrent(id) {
 
 function startRequest() {
   ONLINE = true;
-  S.status = 'request'; S.left = SECS;
+  S.status = 'request'; S.left = SECS; S.declining = false;
   stopCountdown();
   countT = setInterval(() => {
     S.left -= 1;
-    if (S.left <= 0) { A.decline(); toast('超過時間未接單，已退回給管理平台'); }
+    if (S.left <= 0) { A.decline('逾時未接'); toast('超過時間未接單，已退回給管理平台'); }
     else updateCountdown();
   }, 1000);
   try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
@@ -314,7 +314,7 @@ const A = {
     const need = estNeed(r);
     if (need && balance() < need) {
       toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
-      A.decline(); return;
+      A.decline('點數不足'); return;
     }
     ACCEPTING = true; stopCountdown();
     ACCEPTING = false;
@@ -323,15 +323,27 @@ const A = {
     db.set('rides', r.id, { status: 'pickup', acceptedAt: Date.now() }).then(() => presence()).catch(fail);
     render();
   },
-  decline() {
+  // 按「拒絕」先選原因（倒數照跑），選了才真的退回
+  askDecline() { if (!CUR) return; S.declining = true; render(); },
+  cancelDecline() { S.declining = false; render(); },
+  decline(reason) {
     if (!CUR) return;
-    stopCountdown();
+    stopCountdown(); S.declining = false;
     const r = CUR;
     CUR = null; S.status = ONLINE ? 'searching' : 'offline';
-    db.set('rides', r.id, { status: 'pending', driverPhone: '', driverName: '', plate: '', declinedBy: (r.declinedBy || []).concat(ME.phone) })
-      .then(() => presence()).catch(fail);
+    const why = typeof reason === 'string' && reason ? reason : '司機拒絕';
+    db.set('rides', r.id, {
+      status: 'pending', driverPhone: '', driverName: '', plate: '', assignedAt: 0,
+      declinedBy: (r.declinedBy || []).concat(ME.phone),
+      declines: (r.declines || []).concat({ phone: ME.phone, name: ME.name || ME.phone, reason: why, at: Date.now() })
+    }).then(() => presence()).catch(fail);
+    if (why !== '逾時未接' && why !== '點數不足') toast('已拒絕，這張單退回給管理平台');
     render();
   },
+  declineFar() { A.decline('距離太遠'); },
+  declineBusy() { A.decline('正在忙／休息中'); },
+  declinePlace() { A.decline('上車地點不方便'); },
+  declineOther() { A.decline('其他原因'); },
   arrive() {
     if (!CUR) return;
     const now = Date.now();
@@ -543,8 +555,13 @@ function sheetHTML() {
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
-      <div style="display:flex;gap:10px"><button class="decline" data-a="decline" aria-label="拒絕">${ICON_X}</button>
-      <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div></div>`;
+      ${S.declining
+        ? `<div class="whyno"><p style="font-weight:700">拒絕原因（選一個就會退回）</p>
+          <div class="whygrid"><button data-a="declineFar">距離太遠</button><button data-a="declineBusy">正在忙／休息中</button>
+          <button data-a="declinePlace">上車地點不方便</button><button data-a="declineOther">其他原因</button></div>
+          <button class="btn" style="background:#2D3833;height:48px;font-size:16px" data-a="cancelDecline">返回，我要接這張單</button></div>`
+        : `<div style="display:flex;gap:10px"><button class="nobtn" data-a="askDecline">${ICON_X}<span>拒絕</span></button>
+      <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div>`}</div>`;
     case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
       ${r.note ? `<p class="sub">備註：${esc(r.note)}</p>` : ''}
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
@@ -636,7 +653,7 @@ function render() {
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
-    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread;
+    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '');
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.fromCoord(CUR) || BBC.locate(CUR.from || '', CUR.fromArea || '').c });
