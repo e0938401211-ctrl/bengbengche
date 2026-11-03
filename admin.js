@@ -106,36 +106,67 @@ const SUG = { from: [], to: [] };
 let SUG_SEQ = { from: 0, to: 0 }, SUG_T = {}, SUG_AB = {};
 let DPM = null, DPM_PIN = {}, MAP_TARGET = 'from';
 const pickCoord = k => PICK[k] ? [PICK[k].lat, PICK[k].lng] : null;
-function renderSug(k, msg) {
-  const box = $('sug-' + k), q = $('d-' + k).value.trim();
-  const items = SUG[k];
-  box.innerHTML = items.map((x, i) => `<button type="button" role="option" data-sug="${k}:${i}"><b>${esc(x.label)}</b><span>${esc(x.sub || '')}</span></button>`).join('')
-    + `<div class="msg">${msg || (items.length ? '' : '找不到符合的地點')}${q ? '　也可以按下方「在地圖上選」' : ''}</div>`;
-  box.hidden = !q; $('d-' + k).setAttribute('aria-expanded', !box.hidden);
+// 下拉清單分三段：這一區的常用地標、這一區的道路、地址搜尋結果
+const ROADS = {}, ROAD_STATE = {};       // ROADS[區] = 道路清單；ROAD_STATE[區] = 'loading' | 'error'
+const ROADPICK = { from: null, to: null }; // 選了路名後，接著打門牌時先用這條路的位置
+function loadRoads(area) {
+  if (!area || ROADS[area] || ROAD_STATE[area] === 'loading') return;
+  ROAD_STATE[area] = 'loading';
+  BBC.districtRoads(area).then(list => { ROADS[area] = list; ROAD_STATE[area] = ''; })
+    .catch(() => { ROAD_STATE[area] = 'error'; })
+    .then(() => ['from', 'to'].forEach(k => { if ($('d-' + k + '-area').value === area && document.activeElement === $('d-' + k)) buildSug(k, true); }));
 }
-function localSug(q, area) {
-  return ALL_SPOTS.filter(s => s.n.includes(q) || q.includes(s.n))
-    .sort((a, b) => (b.d === area) - (a.d === area))
-    .slice(0, 4).map(s => ({ label: s.n, sub: '高雄市' + s.d + ' · 常用地標', lat: s.c[0], lng: s.c[1], area: s.d }));
+function buildSug(k, keepRemote) {
+  const q = $('d-' + k).value.trim(), area = $('d-' + k + '-area').value;
+  const marks = ALL_SPOTS.filter(s => s.d === area && (!q || s.n.includes(q) || q.includes(s.n)))
+    .map(s => ({ label: s.n, sub: '高雄市' + s.d + ' · 常用地標', lat: s.c[0], lng: s.c[1], area: s.d, kind: 'mark' }));
+  const otherMarks = q ? ALL_SPOTS.filter(s => s.d !== area && (s.n.includes(q) || q.includes(s.n))).slice(0, 3)
+    .map(s => ({ label: s.n, sub: '高雄市' + s.d + ' · 常用地標', lat: s.c[0], lng: s.c[1], area: s.d, kind: 'mark' })) : [];
+  const all = ROADS[area] || [];
+  const roads = all.filter(r => !q || r.name.includes(q) || q.startsWith(r.name)).slice(0, q ? 40 : 300)
+    .map(r => ({ label: r.name, sub: '高雄市' + area + ' · 道路（選了可以接著打門牌）', lat: r.lat, lng: r.lng, area, kind: 'road' }));
+  const remote = keepRemote ? (SUG[k] || []).filter(x => x.kind === 'remote') : [];
+  SUG[k] = marks.concat(roads, otherMarks, remote);
+  const box = $('sug-' + k);
+  const sec = (title, from, to) => from < to ? `<div class="sec">${title}</div>` + SUG[k].slice(from, to).map((x, i) => `<button type="button" role="option" data-sug="${k}:${from + i}"><b>${esc(x.label)}</b><span>${esc(x.sub || '')}</span></button>`).join('') : '';
+  const n1 = marks.length, n2 = n1 + roads.length, n3 = n2 + otherMarks.length;
+  const roadMsg = ROAD_STATE[area] === 'loading' ? `<div class="msg">正在載入${area}的道路…（第一次約需幾秒）</div>`
+    : ROAD_STATE[area] === 'error' ? `<div class="msg">${area}的道路清單暫時載入不到，請直接輸入地址搜尋</div>` : '';
+  box.innerHTML = (area ? '' : '<div class="msg">先選右邊的行政區，就會列出那一區的道路</div>')
+    + sec(area + ' 常用地標', 0, n1)
+    + sec(area + ' 道路' + (all.length ? `（共 ${all.length} 條${q ? '，符合 ' + roads.length + ' 條' : ''}）` : ''), n1, n2) + roadMsg
+    + sec('其他區的地標', n2, n3)
+    + sec('地址搜尋結果', n3, SUG[k].length)
+    + (SUG_MSG[k] ? `<div class="msg">${SUG_MSG[k]}</div>` : '')
+    + '<div class="msg">找不到？按下方「在地圖上選」直接點位置</div>';
+  box.hidden = false; $('d-' + k).setAttribute('aria-expanded', 'true');
 }
+const SUG_MSG = { from: '', to: '' }, SKIP_FOCUS = { from: false, to: false };
 async function searchSug(k) {
   const q = $('d-' + k).value.trim(), area = $('d-' + k + '-area').value, my = ++SUG_SEQ[k];
-  if (q.length < 2) { SUG[k] = []; $('sug-' + k).hidden = true; return; }
-  SUG[k] = localSug(q, area); renderSug(k, '搜尋中…');
+  loadRoads(area);
+  SUG_MSG[k] = q.length >= 2 ? '搜尋地址中…' : '';
+  buildSug(k, false);
+  if (q.length < 2) return;
   if (SUG_AB[k]) SUG_AB[k].abort();
   SUG_AB[k] = new AbortController();
   try {
     const remote = await BBC.geoSearch(q, area, SUG_AB[k].signal);
     if (my !== SUG_SEQ[k]) return;
-    const names = new Set(SUG[k].map(x => x.label));
-    SUG[k] = SUG[k].concat(remote.filter(x => !names.has(x.label))).slice(0, 10);
-    renderSug(k, remote.length ? '' : '地址資料庫找不到，可以換個寫法（例如只打路名），或在地圖上選');
-  } catch (e) { if (e.name !== 'AbortError' && my === SUG_SEQ[k]) renderSug(k, '地址搜尋暫時無法使用，請在地圖上選位置'); }
+    const have = new Set(SUG[k].map(x => x.label));
+    const extra = remote.filter(x => !have.has(x.label)).slice(0, 8).map(x => Object.assign(x, { kind: 'remote' }));
+    SUG_MSG[k] = remote.length ? '' : '地址資料庫找不到這個門牌，可以先選上面的道路，再拖地圖上的大頭針到正確位置';
+    SUG[k] = SUG[k].filter(x => x.kind !== 'remote').concat(extra);
+    buildSug(k, true);
+  } catch (e) { if (e.name !== 'AbortError' && my === SUG_SEQ[k]) { SUG_MSG[k] = '地址搜尋暫時無法使用，請選道路或在地圖上選位置'; buildSug(k, false); } }
 }
 function choose(k, x) {
+  SUG_SEQ[k]++; clearTimeout(SUG_T[k]); if (SUG_AB[k]) SUG_AB[k].abort();   // 取消還沒回來的搜尋，免得清單又被打開
   $('d-' + k).value = x.label;
+  ROADPICK[k] = x.kind === 'road' ? x : null;
   $('sug-' + k).hidden = true; $('d-' + k).setAttribute('aria-expanded', 'false');
   setPick(k, x);
+  if (x.kind === 'road') { const inp = $('d-' + k); inp.value = x.label; SKIP_FOCUS[k] = document.activeElement !== inp; setTimeout(() => { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }, 0); $('pickNote').textContent = '已選「' + x.label + '」，可接著輸入門牌號碼，或拖曳大頭針到正確位置'; }
 }
 function setPick(k, p) {
   PICK[k] = p ? { lat: p.lat, lng: p.lng, area: p.area || BBC.areaOf(p.lat, p.lng) } : null;
@@ -146,11 +177,16 @@ function setPick(k, p) {
   const inp = $('d-' + k);
   inp.addEventListener('input', () => {
     PICK[k] = null;                       // 文字改了，原本的座標就不算數
-    const s = ALL_SPOTS.find(p => p.n === inp.value.trim());
-    if (s) setPick(k, { lat: s.c[0], lng: s.c[1], area: s.d }); else { drawPickMap(); updateEstimate(); }
+    const v = inp.value.trim();
+    const s = ALL_SPOTS.find(p => p.n === v);
+    const rp = ROADPICK[k];
+    if (s) setPick(k, { lat: s.c[0], lng: s.c[1], area: s.d });
+    else if (rp && v.startsWith(rp.label)) setPick(k, rp);   // 路名後面接著打門牌：先用這條路的位置
+    else { ROADPICK[k] = null; drawPickMap(); updateEstimate(); }
+    buildSug(k, true);
     clearTimeout(SUG_T[k]); SUG_T[k] = setTimeout(() => searchSug(k), 350);
   });
-  inp.addEventListener('focus', () => { MAP_TARGET = k; markTarget(); if (inp.value.trim().length >= 2 && !PICK[k]) searchSug(k); });
+  inp.addEventListener('focus', () => { MAP_TARGET = k; markTarget(); if (SKIP_FOCUS[k]) { SKIP_FOCUS[k] = false; return; } searchSug(k); });
   inp.addEventListener('blur', () => setTimeout(() => { $('sug-' + k).hidden = true; inp.setAttribute('aria-expanded', 'false'); }, 180));
   inp.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !$('sug-' + k).hidden && SUG[k][0]) { e.preventDefault(); choose(k, SUG[k][0]); }
@@ -160,7 +196,11 @@ function setPick(k, p) {
     const b = e.target.closest('[data-sug]'); if (!b) return;
     e.preventDefault(); const [kk, i] = b.dataset.sug.split(':'); choose(kk, SUG[kk][+i]);
   });
-  $('d-' + k + '-area').addEventListener('change', () => { if (!PICK[k] && inp.value.trim().length >= 2) searchSug(k); });
+  $('d-' + k + '-area').addEventListener('change', () => {
+    // 換了行政區：清掉不在這區的已選位置，並直接打開這一區的清單
+    if (PICK[k] && PICK[k].area !== $('d-' + k + '-area').value) { PICK[k] = null; ROADPICK[k] = null; drawPickMap(); updateEstimate(); }
+    loadRoads($('d-' + k + '-area').value); inp.focus();
+  });
 });
 function markTarget() { document.querySelectorAll('[data-target]').forEach(b => b.setAttribute('aria-pressed', b.dataset.target === MAP_TARGET)); }
 function drawPickMap() {

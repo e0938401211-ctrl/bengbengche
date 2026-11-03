@@ -127,6 +127,48 @@
     return out.filter(x => { const k = x.label + '|' + x.lat.toFixed(4) + x.lng.toFixed(4); if (seen.has(k)) return false; seen.add(k); return true; })
       .sort((a, b) => (b.area === area) - (a.area === area));
   }
+  // 某一區所有有名字的道路（OpenStreetMap / Overpass），存在瀏覽器 30 天
+  const ROAD_RANK = { trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 5, living_street: 6, service: 7 };
+  const ROADS_MEM = {};
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  async function districtRoads(area) {
+    if (!area) return [];
+    if (ROADS_MEM[area]) return ROADS_MEM[area];
+    try {
+      const c = JSON.parse(localStorage.getItem('bbc_roads_' + area) || 'null');
+      if (c && Date.now() - c.t < 30 * 86400000 && c.list.length) return (ROADS_MEM[area] = c.list);
+    } catch (e) {}
+    const q = `[out:json][timeout:40];
+area["name"="高雄市"]["boundary"="administrative"]->.city;
+rel(area.city)["boundary"="administrative"]["name"="${area}"];
+map_to_area->.d;
+way(area.d)["highway"~"^(trunk|primary|secondary|tertiary|unclassified|residential|living_street)$"]["name"];
+out tags center;`;
+    let lastErr;
+    for (const url of OVERPASS) {
+      try {
+        const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const j = await res.json();
+        const by = {};
+        (j.elements || []).forEach(e => {
+          const n = (e.tags && e.tags.name || '').trim(); if (!n || !e.center) return;
+          const rank = ROAD_RANK[e.tags.highway] ?? 9;
+          const cur = by[n];
+          if (!cur) by[n] = { name: n, lat: e.center.lat, lng: e.center.lon, rank, n: 1, sl: e.center.lat, sg: e.center.lon };
+          else { cur.n++; cur.sl += e.center.lat; cur.sg += e.center.lon; cur.rank = Math.min(cur.rank, rank); }
+        });
+        // 一條路由很多段組成：取各段中心的平均當作這條路的位置
+        const list = Object.values(by).map(x => ({ name: x.name, lat: +(x.sl / x.n).toFixed(6), lng: +(x.sg / x.n).toFixed(6), rank: x.rank }))
+          .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'zh-Hant'));
+        if (!list.length) throw new Error('empty');
+        try { localStorage.setItem('bbc_roads_' + area, JSON.stringify({ t: Date.now(), list })); } catch (e) {}
+        return (ROADS_MEM[area] = list);
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('道路清單載入失敗');
+  }
+
   async function geoReverse(lat, lng) {
     try {
       const j = await (await fetch('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng)).json();
@@ -384,9 +426,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-19',
+    VERSION: '2026.11.03-20',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,   // 每 100 元車資回 10 點
