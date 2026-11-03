@@ -65,19 +65,21 @@ const todayStart = () => BBC.startOfDay();
 function available(excludePhones) {
   return DRIVERS.filter(d => state(d) === 'online' && !(excludePhones || []).includes(d.phone || d.id));
 }
+// 司機的 GPS 位置 5 分鐘內有更新才算數
+const freshLoc = d => d.lat != null && d.lng != null && Date.now() - (d.locAt || 0) < 5 * 60000;
+const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
 function nearestDriver(fromText, fromArea, exclude) {
   const p = BBC.locate(fromText, fromArea).c;
-  const hasArea = d => BBC.KHH.some(x => x.d === d.area);
-  const list = available(exclude).map(d => ({ d, km: hasArea(d) ? BBC.distKm(BBC.areaCenter(d.area), p) : 9999 })).sort((a, b) => a.km - b.km);
+  const list = available(exclude).map(d => ({ d, km: driverKm(d, p) ?? 9999 })).sort((a, b) => a.km - b.km);
   return list[0] ? list[0].d : null;
 }
 function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
   const list = available(exclude);
   const p = fromText ? BBC.locate(fromText, fromArea).c : null;
-  const rows = list.map(d => ({ d, km: p && KHH.some(x => x.d === d.area) ? BBC.distKm(BBC.areaCenter(d.area), p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
-  let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給線上空車司機</option>' : '<option value="">選擇司機…</option>';
+  const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
+  let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（GPS）</option>' : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')} · ${esc(d.area || '')}${km != null ? ' · 約 ' + km.toFixed(1) + ' km' : ''}</option>`).join('')
+    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km（GPS）' : freshLoc(d) ? '' : ' · 未定位'}</option>`).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -205,7 +207,7 @@ function renderRides() {
       : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
-      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給線上空車司機</option>')}</select>
+      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
         <button class="sbtn primary" type="button" data-assign="${esc(r.id)}">派單</button>
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
@@ -247,6 +249,7 @@ const DRIVER_FILTERS = [
   ['disabled', '已停用', d => state(d) === 'disabled']
 ];
 function renderDrivers() {
+  renderDriverMap();
   $('junkBox').hidden = !JUNK.length;
   $('junkText').textContent = `發現 ${JUNK.length} 筆沒有名字的無效司機資料（舊版程式錯誤產生的），不影響真正的司機帳號。`;
   $('driverFilters').innerHTML = DRIVER_FILTERS.map(([k, label, fn]) =>
@@ -268,7 +271,7 @@ function renderDrivers() {
       <td data-label="車輛"><div>${esc(d.plate || '—')}</div><div class="small">${esc([d.brand, d.model].filter(Boolean).join(' ') || '—')}${d.color ? ' · ' + esc(d.color) : ''}</div></td>
       <td data-label="服務類型"><div class="small" style="color:var(--ink)">${esc(d.service || '—')}</div><div class="small">${esc(d.seats || '')}</div></td>
       <td data-label="狀態"><span class="pill p-${st}">${DRIVER_TEXT[st]}</span></td>
-      <td data-label="所在區">${esc(d.area || '—')}</td>
+      <td data-label="定位">${freshLoc(d) ? `<div>GPS ±${esc(d.acc || '?')} 公尺</div><div class="small">${BBC.ago(d.locAt)}更新</div>` : `<span class="small">${d.locAt ? '位置過舊（' + BBC.ago(d.locAt) + '）' : '未定位'}</span>`}</td>
       <td data-label="目前行程">${cur ? `<div class="name" style="font-weight:500">${esc(cur.id)} · ${STATUS_TEXT[cur.status]}</div><div class="small">${esc(cur.from)} → ${esc(cur.to)}</div>` : '<span class="small">—</span>'}</td>
       <td data-label="今日" class="num">${done.length} 趟<div class="small">NT$${fmt(done.reduce((a, r) => a + (r.finalFare || 0), 0))}</div></td>
       <td data-label="最後回報" class="num small">${BBC.ago(d.lastSeen)}</td>
@@ -386,6 +389,7 @@ function setView(v) {
   document.querySelectorAll('[data-mt]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mt === v));
   try { localStorage.setItem('bbc_admin_view', v); } catch (e) {}
   window.scrollTo(0, 0);
+  if (v === 'drivers' && DMAP) setTimeout(() => DMAP.invalidateSize(), 60);
 }
 try { const v = localStorage.getItem('bbc_admin_view'); if (v) setView(v); } catch (e) {}
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
@@ -411,6 +415,35 @@ function routeDialog(id) {
     <div class="mrow"><button class="btn dark" type="button" data-close>關閉</button></div>`);
   $('modalCard').style.width = 'min(640px, 100%)';
   BBC.drawRoute($('mMap'), r.track);
+}
+
+// ---------- 司機即時位置地圖 ----------
+let DMAP = null, DMK = {}, DMAP_FIT = false;
+const STATE_COLOR = { online: '#1F7A34', busy: '#2459D6', lost: '#B3261E', offline: '#6B7570', disabled: '#6B7570' };
+function renderDriverMap() {
+  const el = $('drvMap'); if (!el) return;
+  if (!window.L) { el.innerHTML = '<div style="height:100%;display:grid;place-items:center;color:var(--muted);font-size:14px">地圖載入失敗，請檢查網路</div>'; $('drvMapNote').textContent = ''; return; }
+  if (!DMAP) {
+    DMAP = L.map(el, { scrollWheelZoom: false }).setView([22.6273, 120.3014], 12);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(DMAP);
+  }
+  const shown = DRIVERS.filter(d => freshLoc(d) && state(d) !== 'disabled' && state(d) !== 'offline');
+  const ids = new Set(shown.map(d => d.id));
+  Object.keys(DMK).forEach(id => { if (!ids.has(id)) { DMAP.removeLayer(DMK[id]); delete DMK[id]; } });
+  shown.forEach(d => {
+    const st = state(d), ll = [d.lat, d.lng];
+    const tip = `<b>${esc(d.name)}</b> · ${esc(d.plate || '')}<br>${DRIVER_TEXT[st]} · ±${esc(d.acc || '?')}m · ${BBC.ago(d.locAt)}`;
+    if (!DMK[d.id]) DMK[d.id] = L.circleMarker(ll, { radius: 10, color: '#fff', weight: 3, fillColor: STATE_COLOR[st], fillOpacity: 1 }).addTo(DMAP).bindTooltip(tip, { direction: 'top', offset: [0, -8] });
+    else { DMK[d.id].setLatLng(ll).setStyle({ fillColor: STATE_COLOR[st] }); DMK[d.id].setTooltipContent(tip); }
+  });
+  $('drvMapNote').textContent = shown.length ? `地圖上有 ${shown.length} 位司機（綠色：空車、藍色：載客中、紅色：斷線）。` : '目前沒有已定位的線上司機。司機上線並允許定位後就會出現在地圖上。';
+  if (shown.length && !DMAP_FIT) { DMAP_FIT = true; DMAP.fitBounds(L.latLngBounds(shown.map(d => [d.lat, d.lng])), { padding: [40, 40], maxZoom: 15 }); }
+}
+function fitDriverMap() {
+  if (!DMAP) return;
+  DMAP.invalidateSize();
+  const pts = Object.values(DMK).map(m => m.getLatLng());
+  if (pts.length) DMAP.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
 }
 
 async function cleanJunk() {
@@ -441,6 +474,7 @@ document.addEventListener('click', e => {
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
   const rt = t.closest('[data-route]'); if (rt) return routeDialog(rt.dataset.route);
+  if (t.closest('#fitMapBtn')) return fitDriverMap();
   if (t.closest('#addDriverBtn')) return addDriverDialog();
   if (t.closest('#junkBtn')) return cleanJunk();
   if (t.closest('#pwBtn') || t.closest('#bannerPwBtn')) return adminPwDialog();

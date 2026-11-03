@@ -152,12 +152,18 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .live::before { animation: none; } }
 .overlay { position: absolute; inset: 0; z-index: 15; background: rgba(18,26,23,.45); display: flex; align-items: flex-end; }
 .psheet { width: 100%; background: var(--white); border-radius: 24px 24px 0 0; padding-block: 24px calc(24px + env(safe-area-inset-bottom, 0px)); padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 6px; }
+#lmap { position: absolute; inset: 0; z-index: 0; background: var(--ground); }
+#lmap .leaflet-control-attribution { font-size: 10px; margin-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+.top, .locchip, .sheet { z-index: 2; }
+.locchip { max-width: calc(100% - 32px); overflow: hidden; }
+.locchip span { overflow: hidden; text-overflow: ellipsis; }
 .toast { position: absolute; left: 50%; top: calc(116px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 30; max-width: calc(100% - 32px); background: var(--ink); color: var(--white); padding: 12px 18px; border-radius: 14px; font-size: 15px; font-weight: 500; box-shadow: 0 6px 20px rgba(0,0,0,.25); text-align: center; }
 </style>
 </head>
 <body>
 <div class="app">
   <section id="home">
+    <div id="lmap"></div>
     <div class="map" aria-hidden="true">
       <div class="m" style="left:30px;top:150px;width:120px;height:90px;background:var(--park);border-radius:10px"></div>
       <div class="m" style="right:30px;top:420px;width:110px;height:130px;background:var(--park);border-radius:10px"></div>
@@ -183,12 +189,12 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
     <div class="top">
       <button class="round" id="profileBtn" aria-label="個人檔案"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
       <div class="pill" id="pill">NT$ 0</div>
-      <button class="round" aria-label="安全工具"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></button>
+      <button class="round" id="myLocBtn" aria-label="回到我的位置"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2459D6" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="#2459D6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
     </div>
 
     <div class="locchip" id="locBtn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D12A6E" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-      <span id="locText">服務範圍：高雄市全區</span>
+      <span id="locText">高雄市全區</span>
     </div>
     <div class="sheet" id="sheet" aria-live="polite"></div>
   </section>
@@ -276,11 +282,11 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
 
-<script src="config.js?v=202611030218"></script>
+<script src="config.js?v=202611031940"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="data.js?v=202611030218"></script>
-<script src="driver.js?v=202611030218"></script>
+<script src="data.js?v=202611031940"></script>
+<script src="driver.js?v=202611031940"></script>
 </body>
 </html>

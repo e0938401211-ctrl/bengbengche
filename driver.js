@@ -75,7 +75,7 @@ function stopMeter() { clearInterval(meterT); meterT = null; }
 function presence(extra) {
   if (!ME || !ME.phone) return Promise.resolve();
   const status = !ONLINE ? 'offline' : (CUR && ['pickup', 'trip'].includes(S.status) ? 'busy' : 'online');
-  return db.set('drivers', ME.phone, Object.assign({ status, area: AREA, lastSeen: Date.now(), rideId: CUR && status === 'busy' ? CUR.id : '' }, extra || {})).catch(fail);
+  return db.set('drivers', ME.phone, Object.assign({ status, area: AREA, lastSeen: Date.now(), rideId: CUR && status === 'busy' ? CUR.id : '' }, locFields(), extra || {})).catch(fail);
 }
 function startHeartbeat() {
   clearInterval(beatT);
@@ -137,18 +137,85 @@ function startRequest() {
 }
 
 // ---------- GPS 實際路線 ----------
-let GEO = { watch: null, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' }, wakeLock = null;
+let GEO = { rec: false, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' }, wakeLock = null;
 const r5 = n => Math.round(n * 1e5) / 1e5;
-function startGPS() {
-  if (!CUR) return;
-  if (GEO.rideId !== CUR.id) GEO = { watch: null, rideId: CUR.id, track: (CUR.track || []).slice(), km: CUR.gpsKm || 0, lastT: 0, ok: false, err: '' };
-  if (GEO.watch != null) return;
-  if (!('geolocation' in navigator)) { GEO.err = '這支手機不支援定位'; return; }
-  GEO.watch = navigator.geolocation.watchPosition(onPos, e => {
+// ---------- 精準定位：上線期間持續追蹤手機 GPS ----------
+let LOC = { watch: null, pos: null, err: '', sentAt: 0, sentPos: null };
+function startLocate() {
+  if (LOC.watch != null) return;
+  if (!('geolocation' in navigator)) { LOC.err = '這支手機不支援定位'; return updateLocUI(); }
+  LOC.watch = navigator.geolocation.watchPosition(onLoc, e => {
+    LOC.err = e.code === 1 ? '定位被拒絕：請到 設定 › Safari › 位置 允許' : '抓不到 GPS，請到室外或靠窗';
     GEO.err = e.code === 1 ? '定位被拒絕：里程改用估算' : '暫時抓不到 GPS，里程先用估算';
     const s = $('mSrc'); if (s) s.textContent = GEO.err;
-  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
-  keepScreenOn();
+    updateLocUI();
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  updateLocUI();
+}
+function stopLocate() {
+  if (LOC.watch != null) { try { navigator.geolocation.clearWatch(LOC.watch); } catch (e) {} }
+  LOC.watch = null; LOC.pos = null; LOC.err = '';
+  updateLocUI();
+}
+function onLoc(p) {
+  const { latitude, longitude, accuracy } = p.coords;
+  LOC.pos = { lat: latitude, lng: longitude, acc: Math.round(accuracy), t: p.timestamp };
+  LOC.err = '';
+  if (GEO.rec) onPos(p);
+  updateLocUI();
+  sendLoc(false);
+}
+// 回報位置給管理平台：移動超過 25 公尺最快每 8 秒一次，停著不動每 30 秒一次
+function sendLoc(force) {
+  if (!ME || !ME.phone || !LOC.pos) return;
+  const now = Date.now(), p = [LOC.pos.lat, LOC.pos.lng];
+  const moved = LOC.sentPos ? BBC.distKm(LOC.sentPos, p) * 1000 : Infinity;
+  if (!force && !(now - LOC.sentAt > 30000 || (moved > 25 && now - LOC.sentAt > 8000))) return;
+  LOC.sentAt = now; LOC.sentPos = p;
+  db.set('drivers', ME.phone, { lat: r5(p[0]), lng: r5(p[1]), acc: LOC.pos.acc, locAt: now, lastSeen: now }).catch(() => {});
+}
+const locFields = () => LOC.pos ? { lat: r5(LOC.pos.lat), lng: r5(LOC.pos.lng), acc: LOC.pos.acc, locAt: Date.now() } : {};
+
+// ---------- 地圖 ----------
+let LM = null, MY_MK = null, ACC_C = null, TRACK_L = null, FOLLOW = true;
+function initMap() {
+  if (LM || !window.L) return;
+  try {
+    LM = L.map('lmap', { zoomControl: false, attributionControl: true }).setView([22.6273, 120.3014], 13);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(LM);
+    LM.on('dragstart', () => { FOLLOW = false; });
+    document.querySelector('.map').hidden = true;     // 有真地圖就收起示意圖
+  } catch (e) { console.error(e); LM = null; }
+}
+function updateLocUI() {
+  const chip = $('locText');
+  if (chip) chip.textContent = LOC.pos ? 'GPS 精準定位 · 誤差 ±' + LOC.pos.acc + ' 公尺'
+    : LOC.err ? LOC.err : LOC.watch != null ? 'GPS 定位中…' : '高雄市全區 · 上線後開始定位';
+  if (!LM || !LOC.pos) return;
+  const ll = [LOC.pos.lat, LOC.pos.lng];
+  if (!MY_MK) {
+    ACC_C = L.circle(ll, { radius: LOC.pos.acc, color: '#2459D6', weight: 1, fillOpacity: 0.12 }).addTo(LM);
+    MY_MK = L.circleMarker(ll, { radius: 9, color: '#fff', weight: 3, fillColor: '#D12A6E', fillOpacity: 1 }).addTo(LM);
+  } else { MY_MK.setLatLng(ll); ACC_C.setLatLng(ll).setRadius(LOC.pos.acc); }
+  if (FOLLOW) LM.setView(ll, Math.max(LM.getZoom(), 16), { animate: true });
+  if (GEO.rec && GEO.track.length > 1) {
+    if (!TRACK_L) TRACK_L = L.polyline(GEO.track, { color: '#2459D6', weight: 5, opacity: 0.85 }).addTo(LM);
+    else TRACK_L.setLatLngs(GEO.track);
+  } else if (TRACK_L && !GEO.rec) { LM.removeLayer(TRACK_L); TRACK_L = null; }
+}
+function recenter() {
+  FOLLOW = true;
+  if (LOC.watch == null) startLocate();
+  if (LM && LOC.pos) LM.setView([LOC.pos.lat, LOC.pos.lng], 17, { animate: true });
+  else toast(LOC.err || '正在取得 GPS 位置…');
+}
+
+// ---------- 行程路線記錄 ----------
+function startGPS() {
+  if (!CUR) return;
+  if (GEO.rideId !== CUR.id) GEO = { rec: true, rideId: CUR.id, track: (CUR.track || []).slice(), km: CUR.gpsKm || 0, lastT: 0, ok: false, err: '' };
+  GEO.rec = true;
+  startLocate(); keepScreenOn();
 }
 function onPos(p) {
   const { latitude, longitude, accuracy } = p.coords;
@@ -165,14 +232,15 @@ function onPos(p) {
   GEO.track.push(pt); GEO.lastT = p.timestamp; GEO.ok = true; GEO.err = '';
 }
 function stopGPS() {
-  if (GEO.watch != null) { try { navigator.geolocation.clearWatch(GEO.watch); } catch (e) {} }
-  GEO.watch = null;
+  GEO.rec = false;
   if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+  if (!ONLINE) stopLocate();
+  updateLocUI();
 }
 async function keepScreenOn() {   // 行程中讓螢幕保持亮著，iPhone 鎖螢幕後網頁無法繼續記錄 GPS
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && GEO.watch != null) keepScreenOn(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && GEO.rec) keepScreenOn(); if (!document.hidden && ME && ONLINE) { startLocate(); sendLoc(true); } });
 const usingGps = () => SPEED === 1 && GEO.ok && GEO.track.length > 1;
 
 // ---------- 跳表 ----------
@@ -207,8 +275,8 @@ function startMeter() {
 
 // ---------- 動作 ----------
 const A = {
-  online() { ONLINE = true; S.status = 'searching'; presence(); render(); },
-  offline() { ONLINE = false; S.status = 'offline'; presence(); render(); },
+  online() { ONLINE = true; S.status = 'searching'; FOLLOW = true; startLocate(); presence(); render(); },
+  offline() { ONLINE = false; S.status = 'offline'; if (!GEO.rec) stopLocate(); presence(); render(); },
   accept() {
     if (!CUR) return;
     stopCountdown();
@@ -229,7 +297,7 @@ const A = {
     if (!CUR) return;
     const now = Date.now();
     CUR.startedAt = now; CUR.track = []; CUR.gpsKm = 0; M = { rideId: CUR.id, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
-    GEO = { watch: null, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' };
+    GEO = { rec: false, rideId: null, track: [], km: 0, lastT: 0, ok: false, err: '' };
     S.status = 'trip';
     db.set('rides', CUR.id, { status: 'trip', startedAt: now, meterFare: BBC.RATE.base }).catch(fail);
     startMeter(); render();
@@ -483,7 +551,7 @@ function seg(mode) {
   $('regErr').textContent = ''; $('loginErr').textContent = '';
 }
 function showAuth(msg) {
-  stopCountdown(); stopMeter(); clearInterval(beatT);
+  stopCountdown(); stopMeter(); clearInterval(beatT); GEO.rec = false; stopLocate();
   if (unsubR) unsubR(); if (unsubD) unsubD(); unsubR = unsubD = null;
   ME = null; CUR = null; ONLINE = false; S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };
   $('profile').hidden = true; $('auth').hidden = false;
@@ -506,6 +574,7 @@ function enter(d) {
     ME = withPhone(me);
   });
   unsubR = db.watch('rides', onRides);
+  initMap(); if (ONLINE) startLocate();
   presence(); startHeartbeat(); retryPending(); render();
 }
 
@@ -618,7 +687,8 @@ document.addEventListener('click', e => {
   if (e.target.closest('#tdClose') || e.target.id === 'tripDetail') { $('tripDetail').hidden = true; return; }
   const b = e.target.closest('[data-a]'); if (b) return A[b.dataset.a]();
   const q = e.target.closest('[data-q]'); if (q) return sendMsg(q.dataset.q);
-  if (e.target.closest('#tab-home')) { S.tab = 'home'; render(); }
+  if (e.target.closest('#myLocBtn')) return recenter();
+  if (e.target.closest('#tab-home')) { S.tab = 'home'; render(); if (LM) setTimeout(() => LM.invalidateSize(), 50); }
   if (e.target.closest('#tab-earn')) { S.tab = 'earn'; render(); }
   if (e.target.closest('#seg-reg')) seg('reg');
   if (e.target.closest('#seg-login')) seg('login');
@@ -645,6 +715,7 @@ document.addEventListener('click', e => {
 });
 
 // ---------- 啟動 ----------
+initMap(); updateLocUI();
 $('authLogo').innerHTML = LOGO;
 $('modeHint').textContent = BBC.mode === 'cloud'
   ? '已連線到雲端：帳號由管理平台統一管理，換手機也能登入。（版本 ' + BBC.VERSION + '）'
