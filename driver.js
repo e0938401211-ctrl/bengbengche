@@ -340,10 +340,8 @@ const A = {
     if (why !== '逾時未接' && why !== '點數不足') toast('已拒絕，這張單退回給管理平台');
     render();
   },
-  declineFar() { A.decline('距離太遠'); },
-  declineBusy() { A.decline('正在忙／休息中'); },
-  declinePlace() { A.decline('上車地點不方便'); },
-  declineOther() { A.decline('其他原因'); },
+  declineBusy() { A.decline('正在忙'); },
+  declinePlain() { A.decline('拒絕'); },
   arrive() {
     if (!CUR) return;
     const now = Date.now();
@@ -556,9 +554,8 @@ function sheetHTML() {
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
       ${S.declining
-        ? `<div class="whyno"><p style="font-weight:700">拒絕原因（選一個就會退回）</p>
-          <div class="whygrid"><button data-a="declineFar">距離太遠</button><button data-a="declineBusy">正在忙／休息中</button>
-          <button data-a="declinePlace">上車地點不方便</button><button data-a="declineOther">其他原因</button></div>
+        ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
+          <div class="whygrid"><button data-a="declineBusy">正在忙</button><button data-a="declinePlain">拒絕</button></div>
           <button class="btn" style="background:#2D3833;height:48px;font-size:16px" data-a="cancelDecline">返回，我要接這張單</button></div>`
         : `<div style="display:flex;gap:10px"><button class="nobtn" data-a="askDecline">${ICON_X}<span>拒絕</span></button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div>`}</div>`;
