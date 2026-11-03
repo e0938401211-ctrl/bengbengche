@@ -252,14 +252,14 @@ function startMeter() {
   const tick = () => {
     if (!CUR) return stopMeter();
     M.min += SPEED / 60;
-    const est = CUR.km || 3, mins = CUR.mins || 10;
-    M.km = usingGps() ? GEO.km : Math.min(est, est * M.min / mins);   // 有 GPS 用實際里程，沒有就依預估距離隨時間累加
+    // 有 GPS 用實際里程；沒有 GPS 時，有下車地點就依預估距離隨時間累加，沒有下車地點就以市區平均時速 25 公里估算
+    M.km = usingGps() ? GEO.km : CUR.km ? Math.min(CUR.km, CUR.km * M.min / (CUR.mins || 10)) : M.min * 25 / 60;
     const f = $('mFare');
     if (f) {
       f.textContent = fmt(meterFare());
       $('mKm').textContent = M.km.toFixed(1);
       $('mMin').textContent = Math.floor(M.min);
-      $('mStat').textContent = M.min >= mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(mins - M.min)) + ' 分鐘';
+      $('mStat').textContent = statText();
       $('mSrc').textContent = srcText();
     }
     if (Date.now() - M.lastPush > 5000) {           // 每 5 秒回報一次跳表金額給管理平台
@@ -318,6 +318,10 @@ const A = {
   speed() { SPEED = SPEED === 1 ? 20 : 1; toast(SPEED === 1 ? '跳表恢復正常速度' : '示範快轉：跳表速度 ×20'); render(); }
 };
 const meterAmount = () => meterFare();
+function statText() {
+  if (!CUR || !CUR.mins) return '依乘客指示行駛';
+  return M.min >= CUR.mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(CUR.mins - M.min)) + ' 分鐘';
+}
 function srcText() {
   if (SPEED !== 1) return '示範快轉中：里程為估算';
   if (usingGps()) return 'GPS 記錄中 · 已記錄 ' + GEO.track.length + ' 個點';
@@ -385,7 +389,7 @@ function receiptHTML(r, mapId) {
     ${L('行程編號', esc(r.id))}
     ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
     ${L('上車', esc((r.fromArea || '') + ' ' + (r.from || '')))}
-    ${L('下車', esc((r.toArea || '') + ' ' + (r.to || '')))}
+    ${L('下車', esc(BBC.toText(r)))}
     ${r.note ? L('備註', esc(r.note)) : ''}
     ${L('開始跳表', dt(r.startedAt))}
     ${L('結束', dt(r.doneAt))}
@@ -412,7 +416,7 @@ function historyHTML() {
     <div class="panel" style="padding-block:4px">
       ${list.length ? list.slice(0, 200).map(r => `<button type="button" data-trip="${esc(r.id)}" class="line" style="width:100%;text-align:left;gap:10px;align-items:center;background:none;color:inherit;font-size:15px;padding:12px 0">
           <span style="min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:12px;color:var(--grey)">${dt(r.doneAt)} · ${esc(r.finalKm != null ? r.finalKm : r.km)} 公里</span>
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.from)} → ${esc(r.to)}</span></span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.from)} → ${esc(BBC.hasDest(r) ? r.to : '依乘客指示')}</span></span>
           <b style="flex-shrink:0">NT$${fmt(r.finalFare)} ›</b></button>`).join('')
         : `<div class="line"><span class="sub">${HF === 'today' ? '今天' : HF === 'week' ? '近 7 天' : '目前'}還沒有完成的行程</span></div>`}
     </div></div>`;
@@ -438,11 +442,14 @@ function sheetHTML() {
       <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div></div>`;
     case 'request': return `<div class="req"><div class="row"><div class="chip">管理平台派單 · ${esc(r.id)}</div><div class="dim" id="cdText">剩 ${S.left} 秒</div></div>
       <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
-      <div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${fmt(r.estFare)}</div><div class="dim">預估車資（跳表計費）</div></div>
-      <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 約 ${esc(r.km)} 公里 / ${esc(r.mins)} 分鐘</div>
+      ${r.estFare == null
+        ? `<div style="display:flex;align-items:baseline;gap:10px"><div class="fare">跳表計費</div><div class="dim">起跳 NT$${BBC.RATE.base}</div></div>
+      <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 下車地點依乘客指示</div>`
+        : `<div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${fmt(r.estFare)}</div><div class="dim">預估車資（跳表計費）</div></div>
+      <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 約 ${esc(r.km)} 公里 / ${esc(r.mins)} 分鐘</div>`}
       <div style="display:flex;flex-direction:column;gap:10px">
         <div class="stop"><div class="dot" style="background:#fff;border-radius:50%"></div><div>${esc(r.fromArea)} ${esc(r.from)}</div></div>
-        <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(r.toArea)} ${esc(r.to)}</div></div>
+        <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
       <div style="display:flex;gap:10px"><button class="decline" data-a="decline" aria-label="拒絕">${ICON_X}</button>
@@ -454,9 +461,8 @@ function sheetHTML() {
         <button class="round flat" data-a="chat" aria-label="傳訊息給乘客" style="position:relative"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>${badge()}</button>
       </div><button class="btn" style="background:var(--pink)" data-a="arrive">乘客已上車，開始跳表</button></div>`;
     case 'trip': {
-      const mins = r.mins || 10;
-      return `<div class="card"><div class="row"><div class="kicker">行程中 · ${esc(r.id)}</div><div class="kicker" id="mStat">${M.min >= mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(mins - M.min)) + ' 分鐘'}</div></div>
-      <p class="h2">${esc(r.toArea)} ${esc(r.to)}</p>
+      return `<div class="card"><div class="row"><div class="kicker">行程中 · ${esc(r.id)}</div><div class="kicker" id="mStat">${statText()}</div></div>
+      <p class="h2">${BBC.hasDest(r) ? esc(BBC.toText(r)) : '下車地點：依乘客指示'}</p>
       <div class="meter" role="status" aria-label="跳表">
         <div class="meter-top"><span>蹦蹦車跳表</span><span class="live">計費中</span></div>
         <div class="meter-fare">NT$<span id="mFare">${fmt(meterFare())}</span></div>
@@ -526,7 +532,7 @@ function render() {
   if (S.status !== 'pickup' && S.status !== 'trip') $('chat').hidden = true;
   const r = CUR;
   $('mapLbl2').textContent = '高雄市';
-  $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? r.to : '高雄車站';
+  $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? (r.to || '') : '高雄車站';
   $('pill').textContent = 'NT$ ' + fmt(todayStats().sum);
   $('route').hidden = !(S.status === 'pickup' || S.status === 'trip');
   $('home').hidden = S.tab !== 'home';

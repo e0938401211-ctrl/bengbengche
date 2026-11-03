@@ -65,7 +65,11 @@
   const RATE = { base: 50, perKm: 20, perMin: 2, min: 100 };
   const meterAmount = (km, min) => Math.floor((RATE.base + km * RATE.perKm + min * RATE.perMin) / 5) * 5;
   const finalFare = (km, min) => Math.max(RATE.min, meterAmount(km, min));
+  // 下車地點可不填：沒有下車地點就沒有預估，完全依跳表計費
+  const toText = r => r && r.to ? ((r.toArea ? r.toArea + ' ' : '') + r.to) : '未指定（依乘客指示）';
+  const hasDest = r => !!(r && r.to);
   function estimateTrip(fromText, fromArea, toText, toArea, kmOverride) {
+    if (!toText) { const f = locate(fromText, fromArea); return { fromArea: f.d, toArea: '', km: kmOverride > 0 ? kmOverride : null, mins: null, estFare: null }; }
     const f = locate(fromText, fromArea), t = locate(toText, toArea);
     const km = kmOverride > 0 ? kmOverride : Math.max(1.5, distKm(f.c, t.c) * 1.3);
     const mins = Math.max(5, Math.round(km / (km > 15 ? 45 : 25) * 60 + 2));
@@ -272,9 +276,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-13',
+    VERSION: '2026.11.03-14',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }

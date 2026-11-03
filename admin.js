@@ -99,14 +99,14 @@ $('spots').innerHTML = ALL_SPOTS.map(s => `<option value="${esc(s.n)}">${esc(s.d
 ['d-from-area', 'd-to-area', 'd-km'].forEach(id => $(id).addEventListener('input', updateEstimate));
 function currentEstimate() {
   const from = $('d-from').value.trim(), to = $('d-to').value.trim();
-  if (!from || !to) return null;
+  if (!from) return null;
   return BBC.estimateTrip(from, $('d-from-area').value, to, $('d-to-area').value, parseFloat($('d-km').value));
 }
 function updateEstimate() {
   const e = currentEstimate();
   $('estBox').innerHTML = e
-    ? `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`
-    : '<span>填好上下車地址後會顯示預估</span>';
+    ? (e.estFare == null ? `<span>未填下車地點：依跳表計費</span><span>起跳 <b>NT$${BBC.RATE.base}</b></span>` : `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`)
+    : '<span>填好上車地址後會顯示預估（下車地點可不填）</span>';
   const keep = $('d-driver').value;
   $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value);
   if ([...$('d-driver').options].some(o => o.value === keep)) $('d-driver').value = keep;
@@ -116,7 +116,6 @@ $('dispatchForm').addEventListener('submit', async e => {
   const err = $('dispatchErr');
   const from = $('d-from').value.trim(), to = $('d-to').value.trim(), kmTxt = $('d-km').value.trim();
   if (!from) return err.textContent = '請輸入上車地址';
-  if (!to) return err.textContent = '請輸入下車地址';
   if (kmTxt && !(parseFloat(kmTxt) > 0)) return err.textContent = '公里數要大於 0';
   const est = currentEstimate();
   let pick = $('d-driver').value, drv = null;
@@ -158,7 +157,7 @@ async function unassign(rideId) {
 function cancelRide(rideId) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
   modal(`<h3 id="modalTitle">取消行程 ${esc(r.id)}？</h3>
-    <p class="sub">${esc(r.fromArea)} ${esc(r.from)} → ${esc(r.toArea)} ${esc(r.to)}${r.driverName ? '<br>司機 ' + esc(r.driverName) + ' 的 App 會立即收到通知。' : ''}</p>
+    <p class="sub">${esc(r.fromArea)} ${esc(r.from)} → ${esc(BBC.toText(r))}${r.driverName ? '<br>司機 ' + esc(r.driverName) + ' 的 App 會立即收到通知。' : ''}</p>
     <div class="mrow"><button class="sbtn" type="button" data-close>不要取消</button><button class="btn red" type="button" id="mOk">確定取消</button></div>`);
   $('mOk').onclick = async () => {
     try { await db.set('rides', rideId, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: ADMIN.id }); closeModal(); toast('行程已取消'); } catch (x) { fail(x); }
@@ -204,7 +203,7 @@ function renderRides() {
   $('rideList').innerHTML = list.map(r => {
     const money = r.status === 'done' ? `<b>NT$${fmt(r.finalFare)}</b><span class="t">實收 · ${esc(r.finalKm || r.km)} km</span>`
       : r.status === 'trip' ? `<b>NT$${fmt(r.meterFare || BBC.RATE.base)}</b><span class="t">跳表中 · ${esc(r.meterKm || 0)} km</span>`
-      : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
+      : r.estFare == null ? `<b>跳表計費</b><span class="t">未指定下車地點</span>` : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
       act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
@@ -229,7 +228,7 @@ function renderRides() {
       <div><div class="no">${esc(r.id)}</div><div class="t">${BBC.hhmm(r.createdAt)} 建立</div><div style="margin-top:6px"><span class="pill p-${r.status}">${STATUS_TEXT[r.status] || r.status}</span></div></div>
       <div class="route">
         <div><em>上</em><span>${esc(r.fromArea)} ${esc(r.from)}</span></div>
-        <div><em class="to">下</em><span>${esc(r.toArea)} ${esc(r.to)}</span></div>
+        <div><em class="to">下</em><span${BBC.hasDest(r) ? '' : ' style="color:var(--muted)"'}>${esc(BBC.toText(r))}</span></div>
         ${r.note ? `<div class="t">備註：${esc(r.note)}</div>` : ''}
       </div>
       <div class="who2">乘客 <b style="color:var(--ink)">${esc(r.riderName)}</b>${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''}<br>司機 ${r.driverName ? `<b style="color:var(--ink)">${esc(r.driverName)}</b> · ${esc(r.plate)}` : '—'}</div>
@@ -272,7 +271,7 @@ function renderDrivers() {
       <td data-label="服務類型"><div class="small" style="color:var(--ink)">${esc(d.service || '—')}</div><div class="small">${esc(d.seats || '')}</div></td>
       <td data-label="狀態"><span class="pill p-${st}">${DRIVER_TEXT[st]}</span></td>
       <td data-label="定位">${freshLoc(d) ? `<div>GPS ±${esc(d.acc || '?')} 公尺</div><div class="small">${BBC.ago(d.locAt)}更新</div>` : `<span class="small">${d.locAt ? '位置過舊（' + BBC.ago(d.locAt) + '）' : '未定位'}</span>`}</td>
-      <td data-label="目前行程">${cur ? `<div class="name" style="font-weight:500">${esc(cur.id)} · ${STATUS_TEXT[cur.status]}</div><div class="small">${esc(cur.from)} → ${esc(cur.to)}</div>` : '<span class="small">—</span>'}</td>
+      <td data-label="目前行程">${cur ? `<div class="name" style="font-weight:500">${esc(cur.id)} · ${STATUS_TEXT[cur.status]}</div><div class="small">${esc(cur.from)} → ${esc(BBC.toText(cur))}</div>` : '<span class="small">—</span>'}</td>
       <td data-label="今日" class="num">${done.length} 趟<div class="small">NT$${fmt(done.reduce((a, r) => a + (r.finalFare || 0), 0))}</div></td>
       <td data-label="最後回報" class="num small">${BBC.ago(d.lastSeen)}</td>
       <td data-label="帳號管理"><div class="rowact">
@@ -405,7 +404,7 @@ function routeDialog(id) {
       ${L('司機', esc(r.driverName || '—') + ' · ' + esc(r.plate || ''))}
       ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
       ${L('上車', esc((r.fromArea || '') + ' ' + r.from))}
-      ${L('下車', esc((r.toArea || '') + ' ' + r.to))}
+      ${L('下車', esc(BBC.toText(r)))}
       ${L('時間', BBC.hhmm(r.startedAt) + ' → ' + (done ? BBC.hhmm(r.doneAt) : '進行中'))}
       ${L('里程', '<span id="mKmVal">' + esc(km != null ? km : 0) + ' 公里</span>（' + (r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
       ${done ? L('車資明細', `起跳 ${fmt(r.fareBase)} ＋ 里程 ${fmt(r.fareKm)} ＋ 時間 ${fmt(r.fareTime)}${r.minFareTopUp ? ' ＋ 低消補足 ' + fmt(r.minFareTopUp) : ''}`) : ''}
