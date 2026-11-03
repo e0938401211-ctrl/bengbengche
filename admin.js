@@ -217,7 +217,7 @@ function renderRides() {
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'pickup' || r.status === 'trip') {
       act = `<span class="t">${r.status === 'pickup' ? '司機前往上車點' : '開始跳表 ' + BBC.hhmm(r.startedAt)}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
-        ${r.status === 'trip' ? `<button class="sbtn" type="button" data-route="${esc(r.id)}">即時路線</button>` : ''}
+        <button class="sbtn" type="button" data-route="${esc(r.id)}">即時位置與路線</button>
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'done') {
       act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(Math.round(r.finalMin || 0))} 分鐘 · ${r.distanceSource === 'gps' ? 'GPS 實際里程' : '估算里程'}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
@@ -293,7 +293,7 @@ setInterval(() => { if (ADMIN) { renderKpis(); renderDrivers(); } }, 10000);   /
 
 // ---------- 對話框 ----------
 function modal(html) { $('modalCard').innerHTML = html; $('modal').hidden = false; const f = $('modalCard').querySelector('input,select,button'); if (f) f.focus(); }
-function closeModal() { const m = $('mMap'); if (m && m._map) { try { m._map.remove(); } catch (e) {} } $('modal').hidden = true; $('modalCard').innerHTML = ''; $('modalCard').style.width = ''; }
+function closeModal() { clearInterval(ROUTE_T); const m = $('mMap'); if (m && m._map) { try { m._map.remove(); } catch (e) {} m._map = null; m._st = null; } $('modal').hidden = true; $('modalCard').innerHTML = ''; $('modalCard').style.width = ''; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
 
 $('brands').innerHTML = ['Toyota 豐田', 'Lexus 凌志', 'Honda 本田', 'Nissan 日產', 'Mitsubishi 三菱', 'CMC 中華', 'Mazda 馬自達', 'Subaru 速霸陸', 'Suzuki 鈴木', 'Hyundai 現代', 'Kia 起亞', 'Ford 福特', 'Volkswagen 福斯', 'Škoda', 'Audi 奧迪', 'BMW', 'MINI', 'Mercedes-Benz 賓士', 'Volvo 富豪', 'Porsche 保時捷', 'Tesla 特斯拉', 'Luxgen 納智捷', 'Peugeot 寶獅', 'Citroën 雪鐵龍', 'MG', 'Land Rover', 'Jeep'].map(b => `<option value="${b}">`).join('');
@@ -407,15 +407,27 @@ function routeDialog(id) {
       ${L('上車', esc((r.fromArea || '') + ' ' + r.from))}
       ${L('下車', esc((r.toArea || '') + ' ' + r.to))}
       ${L('時間', BBC.hhmm(r.startedAt) + ' → ' + (done ? BBC.hhmm(r.doneAt) : '進行中'))}
-      ${L('里程', esc(km != null ? km : 0) + ' 公里（' + (r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
+      ${L('里程', '<span id="mKmVal">' + esc(km != null ? km : 0) + ' 公里</span>（' + (r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
       ${done ? L('車資明細', `起跳 ${fmt(r.fareBase)} ＋ 里程 ${fmt(r.fareKm)} ＋ 時間 ${fmt(r.fareTime)}${r.minFareTopUp ? ' ＋ 低消補足 ' + fmt(r.minFareTopUp) : ''}`) : ''}
-      ${L(done ? '實收車資' : '目前跳表', 'NT$' + fmt(fare))}
+      ${L(done ? '實收車資' : '目前跳表', '<span id="mFareVal">NT$' + fmt(fare) + '</span>')}
     </div>
-    ${done ? '' : '<p class="sub">司機 App 每 20 秒同步一次路線，關掉再打開這個視窗可看到最新路線。</p>'}
+    ${done ? '' : '<p class="sub">地圖每 8 秒自動更新司機位置與路線（司機 App 需保持開著）。</p>'}
     <div class="mrow"><button class="btn dark" type="button" data-close>關閉</button></div>`);
   $('modalCard').style.width = 'min(640px, 100%)';
-  BBC.drawRoute($('mMap'), r.track);
+  const draw = () => {
+    const rr = RIDES.find(x => x.id === id) || r;
+    const live = rr.status === 'trip' || rr.status === 'pickup';
+    const dv = DRIVERS.find(x => x.id === rr.driverPhone);
+    BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null });
+    const kmEl = $('mKmVal'), fEl = $('mFareVal');
+    if (kmEl) kmEl.textContent = (live ? (rr.meterKm || 0) : rr.finalKm) + ' 公里';
+    if (fEl) fEl.textContent = 'NT$' + fmt(live ? rr.meterFare : rr.finalFare);
+  };
+  draw();
+  clearInterval(ROUTE_T);
+  if (!done) ROUTE_T = setInterval(() => { if (!$('mMap')) return clearInterval(ROUTE_T); draw(); }, 8000);
 }
+let ROUTE_T = null;
 
 // ---------- 司機即時位置地圖 ----------
 let DMAP = null, DMK = {}, DMAP_FIT = false;

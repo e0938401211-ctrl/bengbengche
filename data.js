@@ -162,24 +162,47 @@
 
   // ---------- 路線地圖（Leaflet + OpenStreetMap） ----------
   // track: [[緯度, 經度], ...]
-  function drawRoute(el, track) {
+  // track: [[緯度, 經度], ...]；opts.live = 行程進行中，opts.current = 司機目前位置
+  // 同一個容器再呼叫一次會就地更新（不重建地圖、不重設縮放）
+  function drawRoute(el, track, opts) {
     if (!el) return null;
-    if (el._map) { try { el._map.remove(); } catch (e) {} el._map = null; }
-    if (!track || track.length < 2) {
-      el.innerHTML = '<div style="height:100%;display:grid;place-items:center;text-align:center;padding:12px;font-size:13px;color:#5B6560;background:#EEF0EC">這趟沒有 GPS 路線<br>（未開啟定位、訊號不足或使用示範快轉）</div>';
+    opts = opts || {};
+    track = track || [];
+    const cur = opts.current && opts.current[0] != null ? opts.current : null;
+    const enough = track.length >= 2 || (opts.live && (track.length || cur));
+    const reset = () => { if (el._map) { try { el._map.remove(); } catch (e) {} } el._map = null; el._st = null; };
+    if (!enough) {
+      reset();
+      el.innerHTML = '<div style="height:100%;display:grid;place-items:center;text-align:center;padding:12px;font-size:13px;color:#5B6560;background:#EEF0EC">' +
+        (opts.live ? '還沒收到司機的 GPS 位置<br>（請司機允許定位並保持 App 開著）' : '這趟沒有 GPS 路線<br>（未開啟定位、訊號不足或使用示範快轉）') + '</div>';
       return null;
     }
-    if (!window.L) { el.innerHTML = '<div style="height:100%;display:grid;place-items:center;font-size:13px;color:#5B6560;background:#EEF0EC">地圖載入失敗，請檢查網路</div>'; return null; }
-    el.innerHTML = '';
-    const map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
-    const line = L.polyline(track, { color: '#2459D6', weight: 5, opacity: 0.9 }).addTo(map);
-    const dot = (p, fill, label) => L.circleMarker(p, { radius: 8, color: '#fff', weight: 3, fillColor: fill, fillOpacity: 1 }).addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
-    dot(track[0], '#121A17', '上車');
-    dot(track[track.length - 1], '#D12A6E', '下車');
-    map.fitBounds(line.getBounds(), { padding: [28, 28] });
-    el._map = map;
-    setTimeout(() => { try { map.invalidateSize(); map.fitBounds(line.getBounds(), { padding: [28, 28] }); } catch (e) {} }, 250);
+    if (!window.L) { reset(); el.innerHTML = '<div style="height:100%;display:grid;place-items:center;font-size:13px;color:#5B6560;background:#EEF0EC">地圖載入失敗，請檢查網路</div>'; return null; }
+    let st = el._st;
+    if (!st) {
+      el.innerHTML = '';
+      const map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+      const note = L.control({ position: 'bottomleft' });
+      note.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText = 'background:#fff;padding:6px 10px;border-radius:8px;font-size:12px;color:#121A17;box-shadow:0 1px 4px rgba(0,0,0,.2)'; st.noteEl = d; return d; };
+      st = el._st = { map, line: null, a: null, b: null, car: null, fitted: false, noteEl: null };
+      note.addTo(map);
+      el._map = map;
+    }
+    const map = st.map;
+    const dot = (p, fill, label, r) => L.circleMarker(p, { radius: r || 8, color: '#fff', weight: 3, fillColor: fill, fillOpacity: 1 }).addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
+    if (track.length >= 2) { if (!st.line) st.line = L.polyline(track, { color: '#2459D6', weight: 5, opacity: 0.9 }).addTo(map); else st.line.setLatLngs(track); }
+    if (track.length) { if (!st.a) st.a = dot(track[0], '#121A17', '上車'); else st.a.setLatLng(track[0]); }
+    if (!opts.live && track.length >= 2) { if (!st.b) st.b = dot(track[track.length - 1], '#D12A6E', '下車'); else st.b.setLatLng(track[track.length - 1]); }
+    const carPos = opts.live ? (cur || track[track.length - 1]) : null;
+    if (carPos) { if (!st.car) st.car = dot(carPos, '#D12A6E', '司機目前位置', 10); else st.car.setLatLng(carPos); }
+    if (st.noteEl) {
+      const msg = opts.live && track.length < 2 ? '司機還沒移動，開始移動後會畫出路線' : opts.live ? '每 8 秒自動更新' : '';
+      st.noteEl.textContent = msg; st.noteEl.style.display = msg ? '' : 'none';
+    }
+    const pts = track.slice(); if (carPos) pts.push(carPos);
+    const fit = () => { if (pts.length >= 2) map.fitBounds(L.latLngBounds(pts), { padding: [32, 32], maxZoom: 17 }); else map.setView(pts[0], 16); };
+    if (!st.fitted) { st.fitted = true; fit(); setTimeout(() => { try { map.invalidateSize(); fit(); } catch (e) {} }, 250); }
     return map;
   }
   // 路線點太多時平均抽樣，避免資料過大
@@ -200,7 +223,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-10',
+    VERSION: '2026.11.03-11',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,

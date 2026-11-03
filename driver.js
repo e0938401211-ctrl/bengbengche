@@ -219,7 +219,7 @@ function startGPS() {
 }
 function onPos(p) {
   const { latitude, longitude, accuracy } = p.coords;
-  if (accuracy > 60) return;                                   // 誤差太大的點不要
+  if (accuracy > (GEO.track.length ? 60 : 100)) return;        // 誤差太大的點不要（第一個點放寬，讓管理平台先看到起點）
   const pt = [r5(latitude), r5(longitude)];
   const last = GEO.track[GEO.track.length - 1];
   if (last) {
@@ -265,7 +265,7 @@ function startMeter() {
     if (Date.now() - M.lastPush > 5000) {           // 每 5 秒回報一次跳表金額給管理平台
       M.lastPush = Date.now();
       const up = { meterFare: meterFare(), meterKm: Math.round(M.km * 10) / 10, meterMin: Math.floor(M.min), gpsKm: Math.round(GEO.km * 100) / 100 };
-      if (Date.now() - M.lastTrack > 20000 && GEO.track.length > 1) { M.lastTrack = Date.now(); up.track = BBC.thinTrack(GEO.track, 800); }   // 每 20 秒同步路線，管理平台可即時看
+      if (Date.now() - M.lastTrack > 10000 && GEO.track.length) { M.lastTrack = Date.now(); up.track = BBC.thinTrack(GEO.track, 800); }   // 每 10 秒同步路線，管理平台可即時看
       db.set('rides', CUR.id, up).catch(() => {});
     }
   };
