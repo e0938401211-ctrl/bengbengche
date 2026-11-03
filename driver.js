@@ -165,6 +165,7 @@ function onLoc(p) {
   LOC.err = '';
   if (GEO.rec) onPos(p);
   updateLocUI();
+  updateApproach();
   sendLoc(false);
 }
 // 回報位置給管理平台：移動超過 25 公尺最快每 8 秒一次，停著不動每 30 秒一次
@@ -215,7 +216,56 @@ function showStopPins() {
     else if (pts.length === 1) LM.setView(pts[0], 16);
   }
   if (!key) STOP_FOR = '';
+  updateApproach();
 }
+// ---------- 有單來了：畫出「我 → 上車點」的開車路線與分鐘數 ----------
+let APP = { rideId: null, data: null, at: 0, pos: null, loading: false, fit: '' }, APP_L = null, APP_CASE = null;
+function pickupPoint(r) { return r ? (BBC.fromCoord(r) || (r.from ? BBC.locate(r.from, r.fromArea).c : null)) : null; }
+function etaText() {
+  const d = APP.data;
+  if (!d) return APP.loading ? '正在規劃路線…' : LOC.pos ? '' : '開啟 GPS 定位後會顯示到上車點的路線';
+  return `開過去約 ${d.min} 分鐘 · ${d.km.toFixed(1)} 公里${d.rough ? '（直線估算）' : ''}`;
+}
+function setEtaText() { ['etaLine', 'etaLine2'].forEach(id => { const el = $(id); if (el) el.textContent = etaText(); }); }
+function updateApproach() {
+  const r = CUR, on = r && (S.status === 'request' || S.status === 'pickup');
+  const f = on ? pickupPoint(r) : null;
+  if (!on || !f) {
+    if (APP_L) { LM && LM.removeLayer(APP_L); LM && LM.removeLayer(APP_CASE); APP_L = APP_CASE = null; }
+    if (APP.rideId) APP = { rideId: null, data: null, at: 0, pos: null, loading: false, fit: '' };
+    return;
+  }
+  if (APP.rideId !== r.id) { APP = { rideId: r.id, data: null, at: 0, pos: null, loading: false, fit: '' }; setEtaText(); }
+  if (APP.data && APP.fit !== r.id + S.status) drawApproach();
+  if (!LOC.pos || APP.loading) return;
+  const me = [LOC.pos.lat, LOC.pos.lng], now = Date.now();
+  const moved = APP.pos ? BBC.distKm(APP.pos, me) * 1000 : Infinity;
+  // 第一次馬上規劃；之後開了 120 公尺以上、且距上次 30 秒以上才重新規劃
+  if (APP.data && !(moved > 120 && now - APP.at > 30000)) return;
+  APP.loading = true; APP.pos = me; APP.at = now; if (!APP.data) setEtaText();
+  const id = r.id;
+  BBC.drivingRoute(me, f).catch(() => {
+    const km = BBC.distKm(me, f);
+    return { coords: [me, f], km: km * 1.35, min: BBC.etaMin(km), rough: true };
+  }).then(d => {
+    APP.loading = false;
+    if (APP.rideId !== id) return;
+    APP.data = d; drawApproach(); setEtaText();
+    if (S.status === 'pickup') { const k = $('etaLine2'); if (!k) render(); }
+  });
+}
+function drawApproach() {
+  if (!LM || !APP.data) return;
+  const c = APP.data.coords;
+  if (!APP_L) {
+    APP_CASE = L.polyline(c, { color: '#fff', weight: 10, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(LM);
+    APP_L = L.polyline(c, { color: '#2459D6', weight: 6, opacity: 0.95, lineJoin: 'round', lineCap: 'round', dashArray: APP.data.rough ? '2 10' : null }).addTo(LM);
+  } else { APP_CASE.setLatLngs(c); APP_L.setLatLngs(c); }
+  if (STOP_PINS.from) STOP_PINS.from.setTooltipContent(`上車點 · 約 ${APP.data.min} 分鐘`);
+  const key = APP.rideId + S.status;
+  if (APP.fit !== key) { APP.fit = key; FOLLOW = false; LM.fitBounds(L.latLngBounds(c), { padding: [60, 60], maxZoom: 17 }); }
+}
+
 function updateLocUI() {
   const chip = $('locText');
   if (chip) chip.textContent = LOC.pos ? 'GPS 精準定位 · 誤差 ±' + LOC.pos.acc + ' 公尺'
@@ -550,7 +600,7 @@ function sheetHTML() {
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 約 ${esc(r.km)} 公里 / ${esc(r.mins)} 分鐘</div>`}
       ${BBC.rideRate(r) ? `<div class="dim" style="font-size:14px">行程結束扣回金：每 100 元 <b style="color:var(--yellow)">${fmt(BBC.rideRate(r))} 點</b>${r.estFare ? '（預估約 ' + estNeed(r) + ' 點）' : ''} · 目前餘額 ${fmt(balance())} 點${balance() < estNeed(r) ? '（不足，請先儲值）' : ''}</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:10px">
-        <div class="stop"><div class="dot" style="background:#fff;border-radius:50%"></div><div>${esc(r.fromArea)} ${esc(r.from)}</div></div>
+        <div class="stop"><div class="dot" style="background:#fff;border-radius:50%"></div><div>${esc(r.fromArea)} ${esc(r.from)}<div id="etaLine" style="color:#8FB3FF;font-size:14px;font-weight:700;margin-top:2px">${etaText()}</div></div></div>
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
@@ -560,6 +610,7 @@ function sheetHTML() {
         : `<div style="display:flex;gap:10px"><button class="nobtn" data-a="askDecline">${ICON_X}<span>拒絕</span></button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div>`}</div>`;
     case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
+      <p id="etaLine2" style="color:var(--blue);font-weight:700">${etaText()}</p>
       ${r.note ? `<p class="sub">備註：${esc(r.note)}</p>` : ''}
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
         <div style="flex:1;min-width:0"><div style="font-weight:500">${esc(r.riderName || '乘客')}</div><div class="sub" style="font-size:13px">${esc(r.riderPhone || '未留電話')}</div></div>

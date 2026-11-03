@@ -255,6 +255,22 @@
     }
   }
 
+  // 開車路線（OpenStreetMap 道路資料，OSRM 路線規劃）：回傳 { coords:[[lat,lng]…], km, min }
+  const OSRM = ['https://router.project-osrm.org/route/v1/driving/', 'https://routing.openstreetmap.de/routed-car/route/v1/driving/'];
+  async function drivingRoute(a, b) {
+    let lastErr;
+    for (const base of OSRM) {
+      try {
+        const u = base + `${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&steps=false`;
+        const j = await (await fetchTimeout(u, null, 9000)).json();
+        const r = j && j.routes && j.routes[0];
+        if (!r) throw new Error(j && j.code || 'no route');
+        return { coords: r.geometry.coordinates.map(c => [c[1], c[0]]), km: r.distance / 1000, min: Math.max(1, Math.round(r.duration / 60)) };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('route');
+  }
+
   async function geoReverse(lat, lng) {
     try {
       const j = await (await fetch('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng)).json();
@@ -512,9 +528,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-26',
+    VERSION: '2026.11.03-27',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
