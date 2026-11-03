@@ -182,7 +182,7 @@ function initMap() {
   if (LM || !window.L) return;
   try {
     LM = L.map('lmap', { zoomControl: false, attributionControl: true }).setView([22.6273, 120.3014], 13);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(LM);
+    BBC.addTiles(LM);
     LM.on('dragstart', () => { FOLLOW = false; });
     document.querySelector('.map').hidden = true;     // 有真地圖就收起示意圖
   } catch (e) { console.error(e); LM = null; }
@@ -199,7 +199,7 @@ function updateLocUI() {
   } else { MY_MK.setLatLng(ll); ACC_C.setLatLng(ll).setRadius(LOC.pos.acc); }
   if (FOLLOW) LM.setView(ll, Math.max(LM.getZoom(), 16), { animate: true });
   if (GEO.rec && GEO.track.length > 1) {
-    if (!TRACK_L) TRACK_L = L.polyline(GEO.track, { color: '#2459D6', weight: 5, opacity: 0.85 }).addTo(LM);
+    if (!TRACK_L) TRACK_L = L.polyline(GEO.track, { color: BBC.ROUTE_RED, weight: 7, opacity: 0.85, lineJoin: 'round', lineCap: 'round' }).addTo(LM);
     else TRACK_L.setLatLngs(GEO.track);
   } else if (TRACK_L && !GEO.rec) { LM.removeLayer(TRACK_L); TRACK_L = null; }
 }
@@ -381,7 +381,7 @@ function receiptHTML(r, mapId) {
   const top = r.minFareTopUp != null ? r.minFareTopUp : Math.max(0, (r.finalFare || 0) - meter);
   const L = (k, v) => `<div class="line" style="padding:9px 0"><span class="sub" style="font-size:14px">${k}</span><b style="text-align:right;max-width:65%;overflow-wrap:anywhere">${v}</b></div>`;
   return `<div class="panel" style="padding:4px 14px;background:var(--page)">
-    ${mapId ? `<div id="${mapId}" style="height:210px;border-radius:12px;overflow:hidden;margin:10px 0 4px;background:#EEF0EC"></div>` : ''}
+    ${mapId ? `<div style="margin:10px 0 4px;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#fff"><div id="${mapId}" style="height:270px;background:#EEF0EC"></div>${BBC.tripSummaryHTML(r.finalFare, min, km, '實收')}</div>` : ''}
     ${L('行程編號', esc(r.id))}
     ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
     ${L('上車', esc((r.fromArea || '') + ' ' + (r.from || '')))}

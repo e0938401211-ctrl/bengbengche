@@ -400,7 +400,7 @@ function routeDialog(id) {
   const km = done ? r.finalKm : r.meterKm, fare = done ? r.finalFare : r.meterFare;
   const L = (k, v) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--soft);font-size:14px"><span class="sub" style="font-size:14px">${k}</span><b style="text-align:right;overflow-wrap:anywhere">${v}</b></div>`;
   modal(`<h3 id="modalTitle">${done ? '行程路線與明細' : '即時路線'} · ${esc(r.id)}</h3>
-    <div id="mMap" style="height:320px;border-radius:14px;overflow:hidden;background:var(--soft)"></div>
+    <div style="flex-shrink:0;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#fff"><div id="mMap" style="height:340px;background:var(--soft)"></div><div id="mSum"></div></div>
     <div>
       ${L('司機', esc(r.driverName || '—') + ' · ' + esc(r.plate || ''))}
       ${L('乘客', esc(r.riderName || '乘客') + (r.riderPhone ? ' · ' + esc(r.riderPhone) : ''))}
@@ -419,6 +419,8 @@ function routeDialog(id) {
     const live = rr.status === 'trip' || rr.status === 'pickup';
     const dv = DRIVERS.find(x => x.id === rr.driverPhone);
     BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null });
+    const sum = $('mSum');
+    if (sum) sum.innerHTML = BBC.tripSummaryHTML(live ? (rr.meterFare || BBC.RATE.base) : rr.finalFare, live ? (rr.startedAt ? (Date.now() - rr.startedAt) / 60000 : 0) : rr.finalMin, live ? rr.meterKm : rr.finalKm, live ? '跳表中' : '實收車資');
     const kmEl = $('mKmVal'), fEl = $('mFareVal');
     if (kmEl) kmEl.textContent = (live ? (rr.meterKm || 0) : rr.finalKm) + ' 公里';
     if (fEl) fEl.textContent = 'NT$' + fmt(live ? rr.meterFare : rr.finalFare);
@@ -437,7 +439,7 @@ function renderDriverMap() {
   if (!window.L) { el.innerHTML = '<div style="height:100%;display:grid;place-items:center;color:var(--muted);font-size:14px">地圖載入失敗，請檢查網路</div>'; $('drvMapNote').textContent = ''; return; }
   if (!DMAP) {
     DMAP = L.map(el, { scrollWheelZoom: false }).setView([22.6273, 120.3014], 12);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(DMAP);
+    BBC.addTiles(DMAP);
   }
   const shown = DRIVERS.filter(d => freshLoc(d) && state(d) !== 'disabled' && state(d) !== 'offline');
   const ids = new Set(shown.map(d => d.id));

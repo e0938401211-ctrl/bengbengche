@@ -162,6 +162,40 @@
 
   // ---------- 路線地圖（Leaflet + OpenStreetMap） ----------
   // track: [[緯度, 經度], ...]
+  // 乾淨的淺色底圖（CARTO Voyager，資料來自 OpenStreetMap）
+  function addTiles(map) {
+    return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO'
+    }).addTo(map);
+  }
+  const ROUTE_RED = '#E5352B';
+  // 紅色大頭針
+  function pinIcon(color) {
+    return L.divIcon({
+      className: '', iconSize: [30, 42], iconAnchor: [15, 40], tooltipAnchor: [0, -36],
+      html: `<svg width="30" height="42" viewBox="0 0 30 42" style="filter:drop-shadow(0 2px 2px rgba(0,0,0,.35))"><path d="M15 41 C15 41 27 25 27 15 A12 12 0 0 0 3 15 C3 25 15 41 15 41Z" fill="${color}" stroke="#fff" stroke-width="2"/><circle cx="15" cy="15" r="5" fill="#fff"/></svg>`
+    });
+  }
+  // 地圖下方的車資摘要（大字車資、時間、公里）
+  function clock(min) {
+    const s = Math.max(0, Math.round((min || 0) * 60)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    const p2 = n => String(n).padStart(2, '0');
+    return h ? `${h}:${p2(m)}:${p2(ss)}` : `${p2(m)}:${p2(ss)}`;
+  }
+  function tripSummaryHTML(fare, min, km, label) {
+    const cell = 'display:flex;justify-content:space-between;align-items:center;gap:6px;padding:10px 14px;min-width:0';
+    const big = 'font-size:clamp(22px,7vw,30px);font-weight:300;font-variant-numeric:tabular-nums;color:#1F2A33;line-height:1.1;white-space:nowrap';
+    const rate = 'text-align:right;font-size:12px;line-height:1.35;color:#5B6560;white-space:nowrap';
+    return `<div style="background:#fff;color:#1F2A33">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:10px 16px 6px">
+        <span style="font-size:clamp(32px,11vw,42px);font-weight:300;font-variant-numeric:tabular-nums;letter-spacing:-.5px;white-space:nowrap">NT$${fmt(fare)}</span>
+        <span style="font-size:12px;color:#5B6560;text-align:right">${label || ''}</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #E4E7E3">
+        <div style="${cell};border-right:1px solid #E4E7E3"><span style="${big}">${clock(min)}</span><span style="${rate}">NT$${RATE.perMin}<br>/ 分鐘</span></div>
+        <div style="${cell}"><span style="${big}">${(Math.round((km || 0) * 10) / 10).toFixed(1)}</span><span style="${rate}">NT$${RATE.perKm}<br>/ 公里</span></div>
+      </div></div>`;
+  }
+
   // track: [[緯度, 經度], ...]；opts.live = 行程進行中，opts.current = 司機目前位置
   // 同一個容器再呼叫一次會就地更新（不重建地圖、不重設縮放）
   function drawRoute(el, track, opts) {
@@ -182,7 +216,7 @@
     if (!st) {
       el.innerHTML = '';
       const map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+      addTiles(map);
       const note = L.control({ position: 'bottomleft' });
       note.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText = 'background:#fff;padding:6px 10px;border-radius:8px;font-size:12px;color:#121A17;box-shadow:0 1px 4px rgba(0,0,0,.2)'; st.noteEl = d; return d; };
       st = el._st = { map, line: null, a: null, b: null, car: null, fitted: false, noteEl: null };
@@ -190,12 +224,16 @@
       el._map = map;
     }
     const map = st.map;
-    const dot = (p, fill, label, r) => L.circleMarker(p, { radius: r || 8, color: '#fff', weight: 3, fillColor: fill, fillOpacity: 1 }).addTo(map).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8] });
-    if (track.length >= 2) { if (!st.line) st.line = L.polyline(track, { color: '#2459D6', weight: 5, opacity: 0.9 }).addTo(map); else st.line.setLatLngs(track); }
-    if (track.length) { if (!st.a) st.a = dot(track[0], '#121A17', '上車'); else st.a.setLatLng(track[0]); }
-    if (!opts.live && track.length >= 2) { if (!st.b) st.b = dot(track[track.length - 1], '#D12A6E', '下車'); else st.b.setLatLng(track[track.length - 1]); }
+    const pin = (p, label) => L.marker(p, { icon: pinIcon(ROUTE_RED), keyboard: false }).addTo(map).bindTooltip(label, { direction: 'top' });
+    if (track.length >= 2) {
+      // 白色外框 + 紅色粗線，在任何底圖上都看得清楚
+      if (!st.line) { st.casing = L.polyline(track, { color: '#fff', weight: 11, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map); st.line = L.polyline(track, { color: ROUTE_RED, weight: 7, opacity: 0.85, lineJoin: 'round', lineCap: 'round' }).addTo(map); }
+      else { st.casing.setLatLngs(track); st.line.setLatLngs(track); }
+    }
+    if (track.length) { if (!st.a) st.a = pin(track[0], '上車'); else st.a.setLatLng(track[0]); }
+    if (!opts.live && track.length >= 2) { if (!st.b) st.b = pin(track[track.length - 1], '下車'); else st.b.setLatLng(track[track.length - 1]); }
     const carPos = opts.live ? (cur || track[track.length - 1]) : null;
-    if (carPos) { if (!st.car) st.car = dot(carPos, '#D12A6E', '司機目前位置', 10); else st.car.setLatLng(carPos); }
+    if (carPos) { if (!st.car) st.car = L.circleMarker(carPos, { radius: 9, color: '#fff', weight: 3, fillColor: '#2459D6', fillOpacity: 1 }).addTo(map).bindTooltip('司機目前位置', { permanent: true, direction: 'top', offset: [0, -8] }); else st.car.setLatLng(carPos); }
     if (st.noteEl) {
       const msg = opts.live && track.length < 2 ? '司機還沒移動，開始移動後會畫出路線' : opts.live ? '每 8 秒自動更新' : '';
       st.noteEl.textContent = msg; st.noteEl.style.display = msg ? '' : 'none';
@@ -223,10 +261,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-11',
+    VERSION: '2026.11.03-12',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
-    drawRoute, thinTrack, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
+    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };
