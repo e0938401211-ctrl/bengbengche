@@ -68,13 +68,80 @@
   // 下車地點可不填：沒有下車地點就沒有預估，完全依跳表計費
   const toText = r => r && r.to ? ((r.toArea ? r.toArea + ' ' : '') + r.to) : '未指定（依乘客指示）';
   const hasDest = r => !!(r && r.to);
-  function estimateTrip(fromText, fromArea, toText, toArea, kmOverride) {
-    if (!toText) { const f = locate(fromText, fromArea); return { fromArea: f.d, toArea: '', km: kmOverride > 0 ? kmOverride : null, mins: null, estFare: null }; }
-    const f = locate(fromText, fromArea), t = locate(toText, toArea);
+  // fromC / toC：精準座標 [緯度, 經度]（有的話優先使用）
+  function estimateTrip(fromText, fromArea, toText, toArea, kmOverride, fromC, toC) {
+    const f = fromC ? { d: fromArea, c: fromC } : locate(fromText, fromArea);
+    if (!toText) return { fromArea: f.d, toArea: '', km: kmOverride > 0 ? kmOverride : null, mins: null, estFare: null };
+    const t = toC ? { d: toArea, c: toC } : locate(toText, toArea);
     const km = kmOverride > 0 ? kmOverride : Math.max(1.5, distKm(f.c, t.c) * 1.3);
     const mins = Math.max(5, Math.round(km / (km > 15 ? 45 : 25) * 60 + 2));
     return { fromArea: f.d, toArea: t.d, km: Math.round(km * 10) / 10, mins, estFare: Math.max(RATE.min, Math.round(meterAmount(km, mins) / 5) * 5) };
   }
+
+  // 依座標判斷在高雄哪一區（找最近的地標所在區）
+  function areaOf(lat, lng) {
+    let best = null, bd = 1e9;
+    ALL_SPOTS.forEach(s => { const d = distKm(s.c, [lat, lng]); if (d < bd) { bd = d; best = s.d; } });
+    return best;
+  }
+  const inKhh = (lat, lng) => lat > 22.43 && lat < 23.48 && lng > 120.15 && lng < 121.05;
+
+  // ---------- 地址搜尋（OpenStreetMap 資料，不需金鑰） ----------
+  // Photon 適合邊打邊搜；找不到時再用 Nominatim 補一次
+  const houseNo = h => !h ? '' : /號$/.test(h) ? h : h + '號';
+  function pickArea(fields, lat, lng) {
+    const hit = fields.find(v => v && KHH.some(k => k.d === v));
+    return hit || areaOf(lat, lng);
+  }
+  async function geoSearch(q, area, signal) {
+    const out = [];
+    const query = (area && !q.includes(area) ? area + ' ' : '') + q;
+    try {
+      const u = 'https://photon.komoot.io/api/?limit=10&lat=22.65&lon=120.32&bbox=120.15,22.43,121.05,23.48&q=' + encodeURIComponent('高雄 ' + query);
+      const j = await (await fetch(u, { signal })).json();
+      (j.features || []).forEach(f => {
+        const [lng, lat] = f.geometry.coordinates, p = f.properties || {};
+        if (!inKhh(lat, lng)) return;
+        const road = (p.street || '') + houseNo(p.housenumber);
+        const name = p.name || road || p.locality || p.district;
+        if (!name) return;
+        const a = pickArea([p.district, p.city, p.county, p.locality], lat, lng);
+        out.push({ label: name === road || !road ? name : name, sub: ['高雄市' + a, road && road !== name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
+      });
+    } catch (e) { if (e.name === 'AbortError') throw e; }
+    if (!out.length) {
+      try {
+        const u = 'https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=tw&accept-language=zh-TW&bounded=1&viewbox=120.15,23.48,121.05,22.43&q=' + encodeURIComponent('高雄市 ' + query);
+        const j = await (await fetch(u, { signal })).json();
+        (j || []).forEach(r => {
+          const lat = +r.lat, lng = +r.lon, ad = r.address || {};
+          if (!inKhh(lat, lng)) return;
+          const road = (ad.road || '') + houseNo(ad.house_number);
+          const a = pickArea([ad.suburb, ad.city_district, ad.town, ad.district, ad.village], lat, lng);
+          out.push({ label: r.name || road || (r.display_name || '').split(',')[0], sub: ['高雄市' + a, road && road !== r.name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
+        });
+      } catch (e) { if (e.name === 'AbortError') throw e; }
+    }
+    // 去掉重複，選定區域的排前面
+    const seen = new Set();
+    return out.filter(x => { const k = x.label + '|' + x.lat.toFixed(4) + x.lng.toFixed(4); if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((a, b) => (b.area === area) - (a.area === area));
+  }
+  async function geoReverse(lat, lng) {
+    try {
+      const j = await (await fetch('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng)).json();
+      const p = ((j.features || [])[0] || {}).properties || {};
+      const road = (p.street || '') + houseNo(p.housenumber);
+      return p.name && road ? p.name + '（' + road + '）' : (p.name || road || '');
+    } catch (e) { return ''; }
+  }
+  // 導航連結（Google 地圖，iPhone 有裝 App 會直接開 App）
+  function navUrl(lat, lng, text, area) {
+    const dest = lat != null ? lat + ',' + lng : encodeURIComponent('高雄市' + (area || '') + (text || ''));
+    return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + dest;
+  }
+  const fromCoord = r => r && r.fromLat != null ? [r.fromLat, r.fromLng] : null;
+  const toCoord = r => r && r.toLat != null ? [r.toLat, r.toLng] : null;
 
   // ---------- 小工具 ----------
   async function hashPw(id, pw) {
@@ -317,9 +384,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-17',
+    VERSION: '2026.11.03-18',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '接單回金', refund: '取消退點', deduct: '扣點', adjust: '調整' },
     DEFAULT_COMMISSION: 30,

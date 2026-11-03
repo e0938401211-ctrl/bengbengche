@@ -189,6 +189,33 @@ function initMap() {
     document.querySelector('.map').hidden = true;     // 有真地圖就收起示意圖
   } catch (e) { console.error(e); LM = null; }
 }
+// 派單／前往上車／行程中：在地圖上標出上車點與下車點
+let STOP_PINS = {}, STOP_FOR = '';
+function showStopPins() {
+  if (!LM) return;
+  const r = CUR, active = r && ['request', 'pickup', 'trip'].includes(S.status);
+  const want = {};
+  if (active) {
+    const f = BBC.fromCoord(r) || (r.from ? BBC.locate(r.from, r.fromArea).c : null);
+    if (f && S.status !== 'trip') want.from = f;
+    const t = BBC.toCoord(r) || (BBC.hasDest(r) ? BBC.locate(r.to, r.toArea).c : null);
+    if (t && S.status === 'trip') want.to = t;
+  }
+  ['from', 'to'].forEach(k => {
+    if (!want[k]) { if (STOP_PINS[k]) { LM.removeLayer(STOP_PINS[k]); delete STOP_PINS[k]; } return; }
+    if (!STOP_PINS[k]) STOP_PINS[k] = L.marker(want[k], { icon: BBC.pinIcon(k === 'from' ? BBC.ROUTE_RED : '#121A17') }).addTo(LM).bindTooltip(k === 'from' ? '上車點' : '下車點', { permanent: true, direction: 'top' });
+    else STOP_PINS[k].setLatLng(want[k]);
+  });
+  // 狀態改變時把地圖框到「我」和目的地
+  const key = active ? r.id + S.status : '';
+  if (key && key !== STOP_FOR) {
+    STOP_FOR = key;
+    const pts = Object.values(want); if (LOC.pos) pts.push([LOC.pos.lat, LOC.pos.lng]);
+    if (pts.length > 1) { FOLLOW = false; LM.fitBounds(L.latLngBounds(pts), { padding: [70, 70], maxZoom: 17 }); }
+    else if (pts.length === 1) LM.setView(pts[0], 16);
+  }
+  if (!key) STOP_FOR = '';
+}
 function updateLocUI() {
   const chip = $('locText');
   if (chip) chip.textContent = LOC.pos ? 'GPS 精準定位 · 誤差 ±' + LOC.pos.acc + ' 公尺'
@@ -453,7 +480,7 @@ function openTrip(id) {
   $('tdBody').innerHTML = receiptHTML(r, 'tdMap');
   $('tdState').textContent = local.get(pendingKey(), {})[id] ? '已存在手機，等待上傳雲端' : '已儲存到雲端';
   $('tripDetail').hidden = false;
-  BBC.drawRoute($('tdMap'), r.track, { fallback: BBC.locate(r.from || '', r.fromArea || '').c });
+  BBC.drawRoute($('tdMap'), r.track, { fallback: BBC.fromCoord(r) || BBC.locate(r.from || '', r.fromArea || '').c });
 }
 
 // ---------- 點數（儲值與回金） ----------
@@ -512,7 +539,9 @@ function sheetHTML() {
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
         <div style="flex:1;min-width:0"><div style="font-weight:500">${esc(r.riderName || '乘客')}</div><div class="sub" style="font-size:13px">${esc(r.riderPhone || '未留電話')}</div></div>
         <button class="round flat" data-a="chat" aria-label="傳訊息給乘客" style="position:relative"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>${badge()}</button>
-      </div><button class="btn" style="background:var(--pink)" data-a="arrive">乘客已上車，開始跳表</button></div>`;
+      </div>
+      <a class="navbtn" href="${BBC.navUrl(r.fromLat, r.fromLng, r.from, r.fromArea)}" target="_blank" rel="noopener"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>導航到上車點${r.fromLat != null ? '（精準位置）' : ''}</a>
+      <button class="btn" style="background:var(--pink)" data-a="arrive">乘客已上車，開始跳表</button></div>`;
     case 'trip': {
       return `<div class="card"><div class="row"><div class="kicker">行程中 · ${esc(r.id)}</div><div class="kicker" id="mStat">${statText()}</div></div>
       <p class="h2">${BBC.hasDest(r) ? esc(BBC.toText(r)) : '下車地點：依乘客指示'}</p>
@@ -525,6 +554,7 @@ function sheetHTML() {
       </div>
       <div class="row"><p class="sub">乘客：${esc(r.riderName || '乘客')}</p>
         <button class="outline" data-a="chat" style="position:relative">傳訊息${badge()}</button></div>
+      ${BBC.hasDest(r) ? `<a class="navbtn" href="${BBC.navUrl(r.toLat, r.toLng, r.to, r.toArea)}" target="_blank" rel="noopener"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>導航到下車點</a>` : ''}
       <button class="btn" style="background:var(--ink)" data-a="complete">完成行程</button></div>`;
     }
     case 'done': return `<div class="card" style="gap:10px;max-height:calc(100vh - 200px);overflow:hidden">
@@ -584,6 +614,7 @@ function render() {
   if (S.status !== 'pickup' && S.status !== 'trip') $('chat').hidden = true;
   const r = CUR;
   $('mapLbl2').textContent = '高雄市';
+  showStopPins();
   $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? (r.to || '') : '高雄車站';
   $('pill').textContent = 'NT$ ' + fmt(todayStats().sum);
   $('route').hidden = !(S.status === 'pickup' || S.status === 'trip');
@@ -597,7 +628,7 @@ function render() {
     const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread;
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
-    if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.locate(CUR.from || '', CUR.fromArea || '').c });
+    if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.fromCoord(CUR) || BBC.locate(CUR.from || '', CUR.fromArea || '').c });
   } else if (ME && S.tab === 'earn') $('earn').innerHTML = earnHTML();
   else if (ME && S.tab === 'points') $('points').innerHTML = pointsHTML();
 }

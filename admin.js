@@ -73,15 +73,15 @@ const enoughPoints = (d, fee) => (d.balance || 0) >= (fee || 0);
 // 司機的 GPS 位置 5 分鐘內有更新才算數
 const freshLoc = d => d.lat != null && d.lng != null && Date.now() - (d.locAt || 0) < 5 * 60000;
 const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
-function nearestDriver(fromText, fromArea, exclude) {
-  const p = BBC.locate(fromText, fromArea).c;
-  const fee = arguments[3] != null ? arguments[3] : feeNow();
+function nearestDriver(fromText, fromArea, exclude, feeArg, coords) {
+  const p = coords || BBC.locate(fromText, fromArea).c;
+  const fee = feeArg != null ? feeArg : feeNow();
   const list = available(exclude).filter(d => enoughPoints(d, fee)).map(d => ({ d, km: driverKm(d, p) ?? 9999 })).sort((a, b) => a.km - b.km);
   return list[0] ? list[0].d : null;
 }
-function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
+function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords) {
   const list = available(exclude);
-  const p = fromText ? BBC.locate(fromText, fromArea).c : null;
+  const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
   let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（GPS）</option>' : '<option value="">選擇司機…</option>';
   html += rows.length
@@ -91,22 +91,108 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
 }
 
 // ---------- 派單 ----------
-$('spots').innerHTML = ALL_SPOTS.map(s => `<option value="${esc(s.n)}">${esc(s.d)}</option>`).join('');
 {
   const opts = KHH.map(a => `<option>${a.d}</option>`).join('');
   $('d-from-area').innerHTML = opts; $('d-to-area').innerHTML = opts;
   $('d-from-area').value = '三民區'; $('d-to-area').value = '三民區';
 }
-['from', 'to'].forEach(k => $('d-' + k).addEventListener('input', () => {
-  const s = ALL_SPOTS.find(p => p.n === $('d-' + k).value.trim());
-  if (s) $('d-' + k + '-area').value = s.d;
-  updateEstimate();
-}));
+// ---------- 精準地址：邊打邊搜尋真實地點，地圖上可拖曳大頭針微調 ----------
+const PICK = { from: null, to: null };      // { lat, lng, area }
+const SUG = { from: [], to: [] };
+let SUG_SEQ = { from: 0, to: 0 }, SUG_T = {}, SUG_AB = {};
+let DPM = null, DPM_PIN = {}, MAP_TARGET = 'from';
+const pickCoord = k => PICK[k] ? [PICK[k].lat, PICK[k].lng] : null;
+function renderSug(k, msg) {
+  const box = $('sug-' + k), q = $('d-' + k).value.trim();
+  const items = SUG[k];
+  box.innerHTML = items.map((x, i) => `<button type="button" role="option" data-sug="${k}:${i}"><b>${esc(x.label)}</b><span>${esc(x.sub || '')}</span></button>`).join('')
+    + `<div class="msg">${msg || (items.length ? '' : '找不到符合的地點')}${q ? '　也可以按下方「在地圖上選」' : ''}</div>`;
+  box.hidden = !q; $('d-' + k).setAttribute('aria-expanded', !box.hidden);
+}
+function localSug(q, area) {
+  return ALL_SPOTS.filter(s => s.n.includes(q) || q.includes(s.n))
+    .sort((a, b) => (b.d === area) - (a.d === area))
+    .slice(0, 4).map(s => ({ label: s.n, sub: '高雄市' + s.d + ' · 常用地標', lat: s.c[0], lng: s.c[1], area: s.d }));
+}
+async function searchSug(k) {
+  const q = $('d-' + k).value.trim(), area = $('d-' + k + '-area').value, my = ++SUG_SEQ[k];
+  if (q.length < 2) { SUG[k] = []; $('sug-' + k).hidden = true; return; }
+  SUG[k] = localSug(q, area); renderSug(k, '搜尋中…');
+  if (SUG_AB[k]) SUG_AB[k].abort();
+  SUG_AB[k] = new AbortController();
+  try {
+    const remote = await BBC.geoSearch(q, area, SUG_AB[k].signal);
+    if (my !== SUG_SEQ[k]) return;
+    const names = new Set(SUG[k].map(x => x.label));
+    SUG[k] = SUG[k].concat(remote.filter(x => !names.has(x.label))).slice(0, 10);
+    renderSug(k, remote.length ? '' : '地址資料庫找不到，可以換個寫法（例如只打路名），或在地圖上選');
+  } catch (e) { if (e.name !== 'AbortError' && my === SUG_SEQ[k]) renderSug(k, '地址搜尋暫時無法使用，請在地圖上選位置'); }
+}
+function choose(k, x) {
+  $('d-' + k).value = x.label;
+  $('sug-' + k).hidden = true; $('d-' + k).setAttribute('aria-expanded', 'false');
+  setPick(k, x);
+}
+function setPick(k, p) {
+  PICK[k] = p ? { lat: p.lat, lng: p.lng, area: p.area || BBC.areaOf(p.lat, p.lng) } : null;
+  if (PICK[k]) $('d-' + k + '-area').value = PICK[k].area;
+  drawPickMap(); updateEstimate();
+}
+['from', 'to'].forEach(k => {
+  const inp = $('d-' + k);
+  inp.addEventListener('input', () => {
+    PICK[k] = null;                       // 文字改了，原本的座標就不算數
+    const s = ALL_SPOTS.find(p => p.n === inp.value.trim());
+    if (s) setPick(k, { lat: s.c[0], lng: s.c[1], area: s.d }); else { drawPickMap(); updateEstimate(); }
+    clearTimeout(SUG_T[k]); SUG_T[k] = setTimeout(() => searchSug(k), 350);
+  });
+  inp.addEventListener('focus', () => { MAP_TARGET = k; markTarget(); if (inp.value.trim().length >= 2 && !PICK[k]) searchSug(k); });
+  inp.addEventListener('blur', () => setTimeout(() => { $('sug-' + k).hidden = true; inp.setAttribute('aria-expanded', 'false'); }, 180));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !$('sug-' + k).hidden && SUG[k][0]) { e.preventDefault(); choose(k, SUG[k][0]); }
+    if (e.key === 'Escape') $('sug-' + k).hidden = true;
+  });
+  $('sug-' + k).addEventListener('mousedown', e => {
+    const b = e.target.closest('[data-sug]'); if (!b) return;
+    e.preventDefault(); const [kk, i] = b.dataset.sug.split(':'); choose(kk, SUG[kk][+i]);
+  });
+  $('d-' + k + '-area').addEventListener('change', () => { if (!PICK[k] && inp.value.trim().length >= 2) searchSug(k); });
+});
+function markTarget() { document.querySelectorAll('[data-target]').forEach(b => b.setAttribute('aria-pressed', b.dataset.target === MAP_TARGET)); }
+function drawPickMap() {
+  const show = !!(PICK.from || PICK.to) || $('pickBox').dataset.open === '1';
+  $('pickBox').hidden = !show; $('mapPickBtn').hidden = show;
+  if (!show || !window.L) return;
+  if (!DPM) {
+    DPM = L.map('dMap', { scrollWheelZoom: false }).setView([22.6273, 120.3014], 12);
+    BBC.addTiles(DPM);
+    DPM.on('click', async e => {
+      const k = MAP_TARGET, lat = +e.latlng.lat.toFixed(6), lng = +e.latlng.lng.toFixed(6);
+      setPick(k, { lat, lng });
+      $('d-' + k).value = '地圖選點';
+      const name = await BBC.geoReverse(lat, lng);
+      if (PICK[k] && PICK[k].lat === lat) $('d-' + k).value = name || '地圖選點（' + PICK[k].area + '）';
+      updateEstimate();
+    });
+  }
+  ['from', 'to'].forEach(k => {
+    const p = PICK[k];
+    if (!p) { if (DPM_PIN[k]) { DPM.removeLayer(DPM_PIN[k]); delete DPM_PIN[k]; } return; }
+    if (!DPM_PIN[k]) {
+      DPM_PIN[k] = L.marker([p.lat, p.lng], { draggable: true, icon: BBC.pinIcon(k === 'from' ? BBC.ROUTE_RED : '#121A17') }).addTo(DPM).bindTooltip(k === 'from' ? '上車' : '下車', { direction: 'top' });
+      DPM_PIN[k].on('dragend', () => { const ll = DPM_PIN[k].getLatLng(); setPick(k, { lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6) }); $('pickNote').textContent = (k === 'from' ? '上車' : '下車') + '位置已微調'; });
+    } else DPM_PIN[k].setLatLng([p.lat, p.lng]);
+  });
+  const pts = ['from', 'to'].map(pickCoord).filter(Boolean);
+  setTimeout(() => { DPM.invalidateSize(); if (pts.length === 1) DPM.setView(pts[0], 17); else if (pts.length > 1) DPM.fitBounds(L.latLngBounds(pts), { padding: [30, 30] }); }, 30);
+}
+$('mapPickBtn').addEventListener('click', () => { $('pickBox').dataset.open = '1'; MAP_TARGET = 'from'; markTarget(); drawPickMap(); $('pickNote').textContent = '在地圖上點一下，設定上車位置'; });
+document.querySelectorAll('[data-target]').forEach(b => b.addEventListener('click', () => { MAP_TARGET = b.dataset.target; markTarget(); $('pickNote').textContent = '在地圖上點一下，設定' + (MAP_TARGET === 'from' ? '上車' : '下車') + '位置'; }));
 ['d-from-area', 'd-to-area', 'd-km'].forEach(id => $(id).addEventListener('input', updateEstimate));
 function currentEstimate() {
   const from = $('d-from').value.trim(), to = $('d-to').value.trim();
   if (!from) return null;
-  return BBC.estimateTrip(from, $('d-from-area').value, to, $('d-to-area').value, parseFloat($('d-km').value));
+  return BBC.estimateTrip(from, $('d-from-area').value, to, $('d-to-area').value, parseFloat($('d-km').value), pickCoord('from'), to ? pickCoord('to') : null);
 }
 function updateEstimate() {
   const e = currentEstimate();
@@ -114,7 +200,7 @@ function updateEstimate() {
     ? (e.estFare == null ? `<span>未填下車地點：依跳表計費</span><span>起跳 <b>NT$${BBC.RATE.base}</b></span>` : `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`)
     : '<span>填好上車地址後會顯示預估（下車地點可不填）</span>';
   const keep = $('d-driver').value;
-  $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value);
+  $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value, pickCoord('from'));
   if ([...$('d-driver').options].some(o => o.value === keep)) $('d-driver').value = keep;
 }
 $('dispatchForm').addEventListener('submit', async e => {
@@ -126,13 +212,15 @@ $('dispatchForm').addEventListener('submit', async e => {
   const est = currentEstimate();
   let pick = $('d-driver').value, drv = null;
   if (pick === '__auto') {
-    drv = nearestDriver(from, $('d-from-area').value, [], feeNow());
+    drv = nearestDriver(from, $('d-from-area').value, [], feeNow(), pickCoord('from'));
     if (!drv) return err.textContent = '目前沒有點數足夠的線上空車司機，可以改選「稍後指派」或先幫司機儲值';
   } else if (pick) drv = DRIVERS.find(d => d.id === pick);
   const now = Date.now();
   const ride = Object.assign({
     source: 'admin', createdBy: ADMIN.id, riderName: $('d-rider').value.trim() || '乘客', riderPhone: $('d-phone').value.trim(),
     note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commission: feeNow(),
+    fromLat: PICK.from ? PICK.from.lat : null, fromLng: PICK.from ? PICK.from.lng : null,
+    toLat: to && PICK.to ? PICK.to.lat : null, toLng: to && PICK.to ? PICK.to.lng : null,
     status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
     assignedAt: drv ? now : 0
   }, est);
@@ -142,6 +230,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     err.textContent = '';
     toast(drv ? `行程 ${id} 已派給 ${drv.name}` : `行程 ${id} 已建立，放在待派單`);
     ['d-rider', 'd-phone', 'd-from', 'd-to', 'd-note', 'd-km'].forEach(i => { $(i).value = ''; });
+    PICK.from = PICK.to = null; $('pickBox').dataset.open = ''; drawPickMap();
     feeTouched = false; applyFeeDefault();
     updateEstimate();
     if (isMobile()) { rideFilter = 'active'; setView('rides'); renderRides(); }
@@ -150,7 +239,7 @@ $('dispatchForm').addEventListener('submit', async e => {
 
 async function assign(rideId, phone) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
-  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, r.commission || 0) : DRIVERS.find(x => x.id === phone);
+  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, r.commission || 0, BBC.fromCoord(r)) : DRIVERS.find(x => x.id === phone);
   if (!d) return toast(phone === '__auto' ? '目前沒有可派的線上司機' : '請先選擇司機');
   if (state(d) !== 'online') return toast(d.name + ' 目前不是線上空車，無法派單');
   if (!enoughPoints(d, r.commission || 0)) return toast(`${d.name} 只剩 ${fmt(d.balance || 0)} 點，不夠這張單的回金 ${r.commission} 點，請先儲值`);
@@ -222,7 +311,7 @@ function renderRides() {
       : r.estFare == null ? `<b>跳表計費</b><span class="t">未指定下車地點</span>` : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
-      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
+      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea, BBC.fromCoord(r)).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
         <button class="sbtn primary" type="button" data-assign="${esc(r.id)}">派單</button>
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
@@ -433,7 +522,7 @@ function routeDialog(id) {
     const rr = RIDES.find(x => x.id === id) || r;
     const live = rr.status === 'trip' || rr.status === 'pickup';
     const dv = DRIVERS.find(x => x.id === rr.driverPhone);
-    BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null, fallback: BBC.locate(rr.from || '', rr.fromArea || '').c });
+    BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null, fallback: BBC.fromCoord(rr) || BBC.locate(rr.from || '', rr.fromArea || '').c });
     const sum = $('mSum');
     const lv = liveMeter(rr);
     if (sum) sum.innerHTML = live ? BBC.tripSummaryHTML(lv.fare, lv.min, lv.km, lv.stale ? '司機 App 未回報（' + BBC.ago(rr.meterAt) + '）' : '跳表中 · 即時同步') : BBC.tripSummaryHTML(rr.finalFare, rr.finalMin, rr.finalKm, '實收車資');

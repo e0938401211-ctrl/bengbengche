@@ -72,6 +72,16 @@ header.top .in { max-width: 1440px; margin: 0 auto; padding-block: 12px; padding
 .field input, .field select, .field textarea { height: 42px; border: 1.5px solid var(--line); border-radius: 10px; padding: 0 12px; background: #fff; width: 100%; min-width: 0; }
 .field textarea { height: 64px; padding: 8px 12px; resize: vertical; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--blue); }
+.field.addr { position: relative; }
+.sug { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 40; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.14); max-height: 320px; overflow-y: auto; min-width: 260px; }
+.sug button { display: block; width: 100%; text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--soft); }
+.sug button:hover, .sug button[aria-selected="true"] { background: var(--soft); }
+.sug b { display: block; font-weight: 500; font-size: 15px; }
+.sug span { display: block; font-size: 12px; color: var(--muted); }
+.sug .msg { padding: 10px 14px; font-size: 13px; color: var(--muted); }
+.pickbox { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--soft); }
+.pickbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 8px 10px; background: #fff; }
+.pickbar .chip { height: 30px; }
 .est { background: var(--soft); border-radius: 10px; padding: 10px 12px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .est b { font-size: 18px; }
 .err { color: var(--red); font-size: 14px; min-height: 20px; margin: 0; }
@@ -255,13 +265,19 @@ table.wtable, table.ltable { min-width: 720px; }
             <div class="field"><label for="d-phone">乘客電話</label><input id="d-phone" type="tel" inputmode="tel" placeholder="可不填" autocomplete="off"></div>
           </div>
           <div class="f2">
-            <div class="field"><label for="d-from">上車地址</label><input id="d-from" list="spots" placeholder="高雄車站、中正四路 211 號" autocomplete="off"></div>
+            <div class="field addr"><label for="d-from">上車地址</label><input id="d-from" placeholder="輸入路名門牌、店名或地標" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="sug-from" aria-expanded="false"><div class="sug" id="sug-from" role="listbox" hidden></div></div>
             <div class="field"><label for="d-from-area">行政區</label><select id="d-from-area"></select></div>
           </div>
           <div class="f2">
-            <div class="field"><label for="d-to">下車地址（可不填）</label><input id="d-to" list="spots" placeholder="不填就依乘客指示" autocomplete="off"></div>
+            <div class="field addr"><label for="d-to">下車地址（可不填）</label><input id="d-to" placeholder="不填就依乘客指示" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="sug-to" aria-expanded="false"><div class="sug" id="sug-to" role="listbox" hidden></div></div>
             <div class="field"><label for="d-to-area">行政區</label><select id="d-to-area"></select></div>
           </div>
+          <div class="pickbox" id="pickBox" hidden>
+            <div id="dMap" style="height:210px"></div>
+            <div class="pickbar"><span class="sub" id="pickNote">拖曳大頭針可微調位置</span>
+              <span class="chips" role="group" aria-label="點地圖要設定哪個位置"><button type="button" class="chip" data-target="from" aria-pressed="true">點地圖設上車</button><button type="button" class="chip" data-target="to" aria-pressed="false">點地圖設下車</button></span></div>
+          </div>
+          <button type="button" class="sbtn" id="mapPickBtn" style="align-self:flex-start">在地圖上選上車點</button>
           <div class="f2">
             <div class="field"><label for="d-note">備註</label><input id="d-note" placeholder="例如 2 件行李、帶寵物" autocomplete="off"></div>
             <div class="field"><label for="d-km">公里數</label><input id="d-km" type="number" inputmode="decimal" min="0.5" step="0.1" placeholder="自動估算"></div>
@@ -328,18 +344,17 @@ table.wtable, table.ltable { min-width: 720px; }
   </nav>
 </div>
 
-<datalist id="spots"></datalist>
 <datalist id="brands"></datalist>
 
 <!-- 對話框 -->
 <div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=202611032029"></script>
+<script src="config.js?v=202611032036"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="data.js?v=202611032029"></script>
-<script src="admin.js?v=202611032029"></script>
+<script src="data.js?v=202611032036"></script>
+<script src="admin.js?v=202611032036"></script>
 </body>
 </html>
