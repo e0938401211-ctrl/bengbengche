@@ -512,12 +512,15 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-22',
+    VERSION: '2026.11.03-23',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
-    DEFAULT_RATE: 10,   // 每 100 元車資回 10 點
+    DEFAULT_RATE: 10,
+    DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機
+    // 直線距離 → 大約開車分鐘：實際道路約是直線的 1.35 倍，市區平均時速約 30 公里（約每公里 2.7 分鐘）
+    etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60)),   // 每 100 元車資回 10 點
     // 回金 = 車資 × 每百元回金 ÷ 100，小數捨去（例：車資 155、每百元 10 點 → 15 點）
     commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),
     // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）

@@ -322,6 +322,7 @@ table.wtable, table.ltable { min-width: 720px; }
       <div class="banner" id="rulesBanner" hidden><span><b>需要更新 Firebase 規則：</b>儲值功能用到新的資料表。請到 Firebase → Firestore Database → 規則，把 coll in [...] 那一行換成<br><code>allow read, write: if coll in ['bbc_drivers', 'bbc_rides', 'bbc_admins', 'bbc_ledger', 'bbc_settings'];</code><br>再按「發布」。</span></div>
       <form class="form" id="feeForm" novalidate style="flex-direction:row;flex-wrap:wrap;align-items:flex-end;gap:10px">
         <div class="field" style="flex:0 1 220px"><label for="s-fee">預設回金點數（每張單）：每 100 元車資回幾點</label><input id="s-fee" type="number" inputmode="numeric" min="0" step="1"></div>
+        <div class="field" style="flex:0 1 220px"><label for="s-range">派單範圍：只派給幾分鐘車程內的司機</label><input id="s-range" type="number" inputmode="numeric" min="1" max="120" step="1"></div>
         <button class="sbtn primary" type="submit" style="height:42px">儲存預設值</button>
         <span class="sub" id="feeSaved"></span>
       </form>
@@ -352,12 +353,12 @@ table.wtable, table.ltable { min-width: 720px; }
 <div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=202611032114"></script>
+<script src="config.js?v=202611032121"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="roads-khh.js?v=202611032114"></script>
-<script src="data.js?v=202611032114"></script>
-<script src="admin.js?v=202611032114"></script>
+<script src="roads-khh.js?v=202611032121"></script>
+<script src="data.js?v=202611032121"></script>
+<script src="admin.js?v=202611032121"></script>
 </body>
 </html>
