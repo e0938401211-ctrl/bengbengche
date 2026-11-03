@@ -311,6 +311,31 @@
   const ONLINE_STALE_MS = 90 * 1000;   // 超過 90 秒沒回報視為斷線
   // 有名字和手機的才是真正的司機帳號
   const isRealDriver = d => !!(d && d.name && (d.phone || /^09\d{8}$/.test(d.id)));
+  // 拒絕／逾時後自動挑下一位：線上空車、沒在接別張單、沒拒絕過、點數夠、GPS 5 分鐘內有更新、開車到上車點在派單範圍內，取最近的
+  function nextDriver(r, drivers, rides, limitMin) {
+    const p = fromCoord(r) || locate(r.from, r.fromArea).c;
+    const excl = new Set((r.declinedBy || []).concat(r.driverPhone ? [r.driverPhone] : []));
+    const busy = new Set((rides || []).filter(x => x.id !== r.id && ['assigned', 'pickup', 'trip'].includes(x.status)).map(x => x.driverPhone));
+    const rate = r.commissionRate != null ? Number(r.commissionRate) : null;
+    const need = rate != null ? Math.floor((r.estFare || RATE.min) * rate / 100) : (r.commission || 0);
+    const lim = r.rangeMin || limitMin || 15;
+    const list = (drivers || []).filter(d => isRealDriver(d) && driverState(d) === 'online' && !excl.has(d.id) && !busy.has(d.id)
+      && (d.balance || 0) >= need && d.lat != null && Date.now() - (d.locAt || 0) < 5 * 60000)
+      .map(d => ({ d, km: distKm([d.lat, d.lng], p) }))
+      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60)) <= lim)
+      .sort((a, b) => a.km - b.km);
+    return list[0] ? list[0].d : null;
+  }
+  // 這張單被拒絕或逾時：寫入原因，並自動改派給下一位（沒有就回到待派單）
+  function declineAndReassign(r, who, reason, drivers, rides, limitMin) {
+    const declinedBy = (r.declinedBy || []).concat(who.phone);
+    const declines = (r.declines || []).concat({ phone: who.phone, name: who.name || who.phone, reason, at: Date.now() });
+    const nx = nextDriver(Object.assign({}, r, { declinedBy, driverPhone: '' }), drivers, rides, limitMin);
+    const patch = nx
+      ? { status: 'assigned', driverPhone: nx.id, driverName: nx.name || nx.id, plate: nx.plate || '', assignedAt: Date.now(), declinedBy, declines, autoNote: '自動改派' }
+      : { status: 'pending', driverPhone: '', driverName: '', plate: '', assignedAt: 0, declinedBy, declines, autoNote: '沒有其他可派的司機' };
+    return db.set('rides', r.id, patch).then(() => nx);
+  }
   function driverState(d) {
     if (!d || d.active === false) return 'disabled';
     if (!d.status || d.status === 'offline') return 'offline';
@@ -528,10 +553,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-27',
+    VERSION: '2026.11.03-28',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
-    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
+    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機

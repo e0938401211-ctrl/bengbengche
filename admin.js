@@ -57,7 +57,7 @@ function enter(a) {
   $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
   unsub.push(db.watch('rides', l => {
     // 司機拒絕時跳通知
-    if (RIDES_SEEN) l.forEach(r => { const n = (r.declines || []).length, o = RIDES_SEEN[r.id]; if (o != null && n > o) { const x = r.declines[n - 1]; toast(`${x.name} 拒絕了行程 ${r.id}（${x.reason}），已回到待派單`); } });
+    if (RIDES_SEEN) l.forEach(r => { const n = (r.declines || []).length, o = RIDES_SEEN[r.id]; if (o != null && n > o) { const x = r.declines[n - 1]; toast(`${x.name} 沒接行程 ${r.id}（${x.reason}），` + (r.status === 'assigned' ? `已自動改派給 ${r.driverName}` : '沒有其他可派的司機，已回到待派單')); } });
     RIDES_SEEN = {}; l.forEach(r => { RIDES_SEEN[r.id] = (r.declines || []).length; });
     RIDES = l; renderAll();
   }));
@@ -311,6 +311,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commissionRate: feeNow(),
     fromLat: PICK.from ? PICK.from.lat : null, fromLng: PICK.from ? PICK.from.lng : null,
     toLat: to && PICK.to ? PICK.to.lat : null, toLng: to && PICK.to ? PICK.to.lng : null,
+    rangeMin: limitMin(),
     status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
     assignedAt: drv ? now : 0
   }, est);
@@ -407,7 +408,7 @@ function renderRides() {
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕${(r.declines || []).length ? '：' + r.declines.map(x => esc(x.name) + '（' + esc(x.reason) + '）').join('、') : ''}</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'assigned') {
-      act = `<span class="t">等待 ${esc(r.driverName)} 接單…</span>
+      act = `<span class="t">等待 ${esc(r.driverName)} 接單… <b data-left="${r.assignedAt || Date.now()}"></b>${r.autoNote === '自動改派' ? '（自動改派）' : ''}</span>
         <button class="sbtn" type="button" data-unassign="${esc(r.id)}">收回改派</button>
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'pickup' || r.status === 'trip') {
@@ -486,7 +487,20 @@ function renderAll() {
   renderKpis(); renderRides(); renderDrivers(); renderWallet();
   if (document.activeElement !== $('d-driver')) updateEstimate();
 }
-setInterval(() => { if (ADMIN) { renderKpis(); renderDrivers(); } }, 10000);   // 更新「最後回報」與斷線判斷
+setInterval(() => { if (ADMIN) { renderKpis(); renderDrivers(); } }, 10000);
+// 備援：司機手機沒回應（關機、沒網路）超過 30 秒＋緩衝，由管理平台記成逾時並自動改派下一位
+const STALE_DONE = {};
+setInterval(() => {
+  if (!ADMIN) return;
+  RIDES.filter(r => r.status === 'assigned' && r.assignedAt && Date.now() - r.assignedAt > (BBC.ACCEPT_SECS + 12) * 1000).forEach(r => {
+    const k = r.id + ':' + r.assignedAt; if (STALE_DONE[k]) return; STALE_DONE[k] = 1;
+    const d = DRIVERS.find(x => x.id === r.driverPhone) || { phone: r.driverPhone, name: r.driverName };
+    const old = Date.now() - r.assignedAt > 10 * 60000;   // 很久以前的舊單只退回待派單，不自動改派
+    BBC.declineAndReassign(r, { phone: d.id || d.phone, name: d.name }, '逾時未回應', old ? [] : DRIVERS, RIDES, limitMin()).catch(fail);
+  });
+  if (!$('rideList')) return;
+  document.querySelectorAll('[data-left]').forEach(el => { const s = Math.max(0, BBC.ACCEPT_SECS - Math.floor((Date.now() - +el.dataset.left) / 1000)); el.textContent = s ? `剩 ${s} 秒` : '逾時，改派中…'; });
+}, 1000);   // 更新「最後回報」與斷線判斷
 
 // ---------- 對話框 ----------
 function modal(html) { $('modalCard').innerHTML = html; $('modal').hidden = false; const f = $('modalCard').querySelector('input,select,button'); if (f) f.focus(); }

@@ -53,7 +53,7 @@ const local = {
 // ---------- 狀態 ----------
 let ME = null;          // 目前登入的司機資料
 let ONLINE = false;     // 是否上線接單
-let RIDES = [];         // 所有行程（即時）
+let RIDES = [], ALL_DRIVERS = [];         // 所有行程（即時）
 let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
 const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
@@ -382,11 +382,9 @@ const A = {
     const r = CUR;
     CUR = null; S.status = ONLINE ? 'searching' : 'offline';
     const why = typeof reason === 'string' && reason ? reason : '司機拒絕';
-    db.set('rides', r.id, {
-      status: 'pending', driverPhone: '', driverName: '', plate: '', assignedAt: 0,
-      declinedBy: (r.declinedBy || []).concat(ME.phone),
-      declines: (r.declines || []).concat({ phone: ME.phone, name: ME.name || ME.phone, reason: why, at: Date.now() })
-    }).then(() => presence()).catch(fail);
+    // 退回後自動派給下一位最近的司機（沒有就回到管理平台的待派單）
+    BBC.declineAndReassign(Object.assign({}, r, { driverPhone: ME.phone }), ME, why, ALL_DRIVERS.filter(d => d.id !== ME.phone), RIDES)
+      .then(() => presence()).catch(fail);
     if (why !== '逾時未接' && why !== '點數不足') toast('已拒絕，這張單退回給管理平台');
     render();
   },
@@ -735,6 +733,7 @@ function enter(d) {
   unsubD = db.watch('drivers', (list, meta) => {
     if (!ME) return;
     if (meta && meta.fromCache) return;   // 手機剛連上時會先收到本機暫存（可能是空的），只相信雲端回來的資料
+    ALL_DRIVERS = list;
     const me = list.find(x => x.id === ME.phone);
     if (!me) return;   // 名單裡暫時找不到自己時不登出（被刪除的帳號下次登入時會被擋下）
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
