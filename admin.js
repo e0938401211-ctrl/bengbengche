@@ -56,6 +56,7 @@ function enter(a) {
   $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
   unsub.push(db.watch('rides', l => { RIDES = l; renderAll(); }));
   unsub.push(db.watch('drivers', l => { JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver); renderAll(); }));
+  setTimeout(() => { loadRoads($('d-from-area').value); loadRoads($('d-to-area').value); }, 800);   // 先在背景載好預設區的道路
   unsub.push(db.watch('ledger', l => { LEDGER = l; $('rulesBanner').hidden = true; renderWallet(); }));
   unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE }); applyFeeDefault(); renderWallet(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
@@ -109,13 +110,20 @@ const pickCoord = k => PICK[k] ? [PICK[k].lat, PICK[k].lng] : null;
 // 下拉清單分三段：這一區的常用地標、這一區的道路、地址搜尋結果
 const ROADS = {}, ROAD_STATE = {};       // ROADS[區] = 道路清單；ROAD_STATE[區] = 'loading' | 'error'
 const ROADPICK = { from: null, to: null }; // 選了路名後，接著打門牌時先用這條路的位置
-function loadRoads(area) {
-  if (!area || ROADS[area] || ROAD_STATE[area] === 'loading') return;
-  ROAD_STATE[area] = 'loading';
-  BBC.districtRoads(area).then(list => { ROADS[area] = list; ROAD_STATE[area] = ''; })
-    .catch(() => { ROAD_STATE[area] = 'error'; })
-    .then(() => ['from', 'to'].forEach(k => { if ($('d-' + k + '-area').value === area && document.activeElement === $('d-' + k)) buildSug(k, true); }));
+const ROAD_T0 = {};
+function loadRoads(area, force) {
+  if (!area || (ROADS[area] && !force) || ROAD_STATE[area] === 'loading') return;
+  ROAD_STATE[area] = 'loading'; ROAD_T0[area] = Date.now();
+  BBC.districtRoads(area, { force }).then(list => { ROADS[area] = list; ROAD_STATE[area] = ''; })
+    .catch(e => { console.error('roads', area, e); ROAD_STATE[area] = 'error'; })
+    // 載完後，只要清單還開著就馬上更新（不必再點一次）
+    .then(() => ['from', 'to'].forEach(k => { if ($('d-' + k + '-area').value === area && !$('sug-' + k).hidden) buildSug(k, true); }));
 }
+// 載入中時，每秒更新「已等幾秒」
+setInterval(() => ['from', 'to'].forEach(k => {
+  const a = $('d-' + k + '-area').value, el = $('sug-' + k).querySelector('.roadwait');
+  if (el && ROAD_STATE[a] === 'loading') el.textContent = Math.round((Date.now() - ROAD_T0[a]) / 1000) + ' 秒';
+}), 1000);
 function buildSug(k, keepRemote) {
   const q = $('d-' + k).value.trim(), area = $('d-' + k + '-area').value;
   const marks = ALL_SPOTS.filter(s => s.d === area && (!q || s.n.includes(q) || q.includes(s.n)))
@@ -130,8 +138,8 @@ function buildSug(k, keepRemote) {
   const box = $('sug-' + k);
   const sec = (title, from, to) => from < to ? `<div class="sec">${title}</div>` + SUG[k].slice(from, to).map((x, i) => `<button type="button" role="option" data-sug="${k}:${from + i}"><b>${esc(x.label)}</b><span>${esc(x.sub || '')}</span></button>`).join('') : '';
   const n1 = marks.length, n2 = n1 + roads.length, n3 = n2 + otherMarks.length;
-  const roadMsg = ROAD_STATE[area] === 'loading' ? `<div class="msg">正在載入${area}的道路…（第一次約需幾秒）</div>`
-    : ROAD_STATE[area] === 'error' ? `<div class="msg">${area}的道路清單暫時載入不到，請直接輸入地址搜尋</div>` : '';
+  const roadMsg = ROAD_STATE[area] === 'loading' ? `<div class="msg">正在載入${area}的道路…已等 <span class="roadwait">${Math.round((Date.now() - (ROAD_T0[area] || Date.now())) / 1000)} 秒</span>。第一次可能要等 10–30 秒，載好會存起來，之後馬上出現。也可以直接打路名搜尋。</div>`
+    : ROAD_STATE[area] === 'error' ? `<div class="msg">${area}的道路清單暫時載入不到（地圖資料服務忙線）。可以直接打路名搜尋，或 <button type="button" class="linkbtn" data-reloadroads="${area}">重新載入</button></div>` : '';
   box.innerHTML = (area ? '' : '<div class="msg">先選右邊的行政區，就會列出那一區的道路</div>')
     + sec(area + ' 常用地標', 0, n1)
     + sec(area + ' 道路' + (all.length ? `（共 ${all.length} 條${q ? '，符合 ' + roads.length + ' 條' : ''}）` : ''), n1, n2) + roadMsg
@@ -193,6 +201,8 @@ function setPick(k, p) {
     if (e.key === 'Escape') $('sug-' + k).hidden = true;
   });
   $('sug-' + k).addEventListener('mousedown', e => {
+    const rr = e.target.closest('[data-reloadroads]');
+    if (rr) { e.preventDefault(); ROAD_STATE[rr.dataset.reloadroads] = ''; loadRoads(rr.dataset.reloadroads, true); buildSug(k, true); return; }
     const b = e.target.closest('[data-sug]'); if (!b) return;
     e.preventDefault(); const [kk, i] = b.dataset.sug.split(':'); choose(kk, SUG[kk][+i]);
   });
