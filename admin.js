@@ -202,7 +202,7 @@ function renderRides() {
   document.querySelectorAll('[data-pick]').forEach(s => { keep[s.dataset.pick] = s.value; });
   $('rideList').innerHTML = list.map(r => {
     const money = r.status === 'done' ? `<b>NT$${fmt(r.finalFare)}</b><span class="t">實收 · ${esc(r.finalKm || r.km)} km</span>`
-      : r.status === 'trip' ? `<b>NT$${fmt(r.meterFare || BBC.RATE.base)}</b><span class="t">跳表中 · ${esc(r.meterKm || 0)} km</span>`
+      : r.status === 'trip' ? (lv => `<b>NT$${fmt(lv.fare)}</b><span class="t">跳表中 · ${lv.km.toFixed(1)} km · ${BBC.clock(lv.min)}</span>`)(liveMeter(r))
       : r.estFare == null ? `<b>跳表計費</b><span class="t">未指定下車地點</span>` : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
@@ -410,7 +410,7 @@ function routeDialog(id) {
       ${done ? L('車資明細', `起跳 ${fmt(r.fareBase)} ＋ 里程 ${fmt(r.fareKm)} ＋ 時間 ${fmt(r.fareTime)}${r.minFareTopUp ? ' ＋ 低消補足 ' + fmt(r.minFareTopUp) : ''}`) : ''}
       ${L(done ? '實收車資' : '目前跳表', '<span id="mFareVal">NT$' + fmt(fare) + '</span>')}
     </div>
-    ${done ? '' : '<p class="sub">地圖每 8 秒自動更新司機位置與路線（司機 App 需保持開著）。</p>'}
+    ${done ? '' : '<p class="sub">每 3 秒自動更新。時間依「開始跳表」的時間即時計算，金額用和司機 App 相同的公式，兩邊會一致（司機 App 需保持開著）。</p>'}
     <div class="mrow"><button class="btn dark" type="button" data-close>關閉</button></div>`);
   $('modalCard').style.width = 'min(640px, 100%)';
   const draw = () => {
@@ -419,16 +419,23 @@ function routeDialog(id) {
     const dv = DRIVERS.find(x => x.id === rr.driverPhone);
     BBC.drawRoute($('mMap'), rr.track, { live, current: live && dv && freshLoc(dv) ? [dv.lat, dv.lng] : null });
     const sum = $('mSum');
-    if (sum) sum.innerHTML = BBC.tripSummaryHTML(live ? (rr.meterFare || BBC.RATE.base) : rr.finalFare, live ? (rr.startedAt ? (Date.now() - rr.startedAt) / 60000 : 0) : rr.finalMin, live ? rr.meterKm : rr.finalKm, live ? '跳表中' : '實收車資');
+    const lv = liveMeter(rr);
+    if (sum) sum.innerHTML = live ? BBC.tripSummaryHTML(lv.fare, lv.min, lv.km, lv.stale ? '司機 App 未回報（' + BBC.ago(rr.meterAt) + '）' : '跳表中 · 即時同步') : BBC.tripSummaryHTML(rr.finalFare, rr.finalMin, rr.finalKm, '實收車資');
     const kmEl = $('mKmVal'), fEl = $('mFareVal');
-    if (kmEl) kmEl.textContent = (live ? (rr.meterKm || 0) : rr.finalKm) + ' 公里';
-    if (fEl) fEl.textContent = 'NT$' + fmt(live ? rr.meterFare : rr.finalFare);
+    if (kmEl) kmEl.textContent = (live ? lv.km.toFixed(1) : rr.finalKm) + ' 公里';
+    if (fEl) fEl.textContent = 'NT$' + fmt(live ? lv.fare : rr.finalFare);
   };
   draw();
   clearInterval(ROUTE_T);
-  if (!done) ROUTE_T = setInterval(() => { if (!$('mMap')) return clearInterval(ROUTE_T); draw(); }, 8000);
+  if (!done) ROUTE_T = setInterval(() => { if (!$('mMap')) return clearInterval(ROUTE_T); draw(); }, 3000);
 }
 let ROUTE_T = null;
+// 進行中行程的跳表：時間由開始跳表時間即時計算，里程用司機最後回報的值，金額套用同一個計價公式
+function liveMeter(r) {
+  const min = r.startedAt ? Math.max(0, (Date.now() - r.startedAt) / 60000) : (r.meterMin || 0);
+  const km = r.meterKm || 0;
+  return { min, km, fare: r.startedAt ? BBC.meterAmount(km, min) : (r.meterFare || BBC.RATE.base), stale: r.meterAt ? Date.now() - r.meterAt > 15000 : false };
+}
 
 // ---------- 司機即時位置地圖 ----------
 let DMAP = null, DMK = {}, DMAP_FIT = false;

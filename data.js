@@ -149,17 +149,20 @@
     const ref = (c, id) => { if (!id || typeof id !== 'string') throw new Error('資料編號錯誤'); return col(c).doc(id); };
     // Firestore 不接受 undefined 欄位，先清掉
     const clean = o => JSON.parse(JSON.stringify(o));
+    // Firestore 不接受「陣列裡的陣列」，路線點 [緯度, 經度] 要轉成 {lat, lng} 才存得進去
+    const enc = o => { const c = clean(o); if (Array.isArray(c.track)) c.track = c.track.map(p => Array.isArray(p) ? { lat: p[0], lng: p[1] } : p); return c; };
+    const dec = (id, data) => { const o = Object.assign({ id }, data); if (Array.isArray(o.track)) o.track = o.track.map(p => p && !Array.isArray(p) && p.lat != null ? [p.lat, p.lng] : p); return o; };
     return {
       mode: 'cloud',
       watch(c, fn) {
         return col(c).onSnapshot(
-          s => fn(s.docs.map(d => Object.assign({ id: d.id }, d.data())), { fromCache: s.metadata.fromCache }),
+          s => fn(s.docs.map(d => dec(d.id, d.data())), { fromCache: s.metadata.fromCache }),
           err => { console.error('Firestore', err); if (window.BBC.onError) window.BBC.onError(err); }
         );
       },
-      async get(c, id) { const d = await ref(c, id).get(); return d.exists ? Object.assign({ id: d.id }, d.data()) : null; },
-      async set(c, id, data) { await ref(c, id).set(clean(data), { merge: true }); },
-      async add(c, data) { const id = rideNo(); await ref(c, id).set(clean(data)); return id; },
+      async get(c, id) { const d = await ref(c, id).get(); return d.exists ? dec(d.id, d.data()) : null; },
+      async set(c, id, data) { await ref(c, id).set(enc(data), { merge: true }); },
+      async add(c, data) { const id = rideNo(); await ref(c, id).set(enc(data)); return id; },
       async remove(c, id) { await ref(c, id).delete(); }
     };
   }
@@ -276,7 +279,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-14',
+    VERSION: '2026.11.03-15',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,

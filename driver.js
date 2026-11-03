@@ -58,7 +58,8 @@ let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
 const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
 let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null;
-let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 }, SPEED = 1;
+let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
+let SYNC_ERR_SHOWN = false;
 
 // ---------- 小工具 ----------
 function toast(msg) {
@@ -241,7 +242,7 @@ async function keepScreenOn() {   // 行程中讓螢幕保持亮著，iPhone 鎖
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {}
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && GEO.rec) keepScreenOn(); if (!document.hidden && ME && ONLINE) { startLocate(); sendLoc(true); } });
-const usingGps = () => SPEED === 1 && GEO.ok && GEO.track.length > 1;
+const usingGps = () => GEO.ok && GEO.track.length > 1;
 
 // ---------- 跳表 ----------
 function startMeter() {
@@ -251,7 +252,8 @@ function startMeter() {
   startGPS();
   const tick = () => {
     if (!CUR) return stopMeter();
-    M.min += SPEED / 60;
+    // 以開始跳表的時間計算經過分鐘，手機切到背景或計時器變慢都不會有誤差，管理平台也用同一個基準
+    M.min = CUR.startedAt ? Math.max(0, (Date.now() - CUR.startedAt) / 60000) : M.min + 1 / 60;
     // 有 GPS 用實際里程；沒有 GPS 時，有下車地點就依預估距離隨時間累加，沒有下車地點就以市區平均時速 25 公里估算
     M.km = usingGps() ? GEO.km : CUR.km ? Math.min(CUR.km, CUR.km * M.min / (CUR.mins || 10)) : M.min * 25 / 60;
     const f = $('mFare');
@@ -262,11 +264,11 @@ function startMeter() {
       $('mStat').textContent = statText();
       $('mSrc').textContent = srcText();
     }
-    if (Date.now() - M.lastPush > 5000) {           // 每 5 秒回報一次跳表金額給管理平台
+    if (Date.now() - M.lastPush > 3000) {           // 每 3 秒回報一次跳表給管理平台
       M.lastPush = Date.now();
-      const up = { meterFare: meterFare(), meterKm: Math.round(M.km * 10) / 10, meterMin: Math.floor(M.min), gpsKm: Math.round(GEO.km * 100) / 100 };
+      const up = { meterFare: meterFare(), meterKm: Math.round(M.km * 100) / 100, meterMin: Math.round(M.min * 100) / 100, gpsKm: Math.round(GEO.km * 100) / 100, meterAt: Date.now(), distanceSource: usingGps() ? 'gps' : 'estimate' };
       if (Date.now() - M.lastTrack > 10000 && GEO.track.length) { M.lastTrack = Date.now(); up.track = BBC.thinTrack(GEO.track, 800); }   // 每 10 秒同步路線，管理平台可即時看
-      db.set('rides', CUR.id, up).catch(() => {});
+      db.set('rides', CUR.id, up).then(() => { SYNC_ERR_SHOWN = false; }).catch(e => { console.error(e); if (!SYNC_ERR_SHOWN) { SYNC_ERR_SHOWN = true; toast('跳表同步到管理平台失敗：' + (e.code || e.message)); } });
     }
   };
   tick();
@@ -315,7 +317,7 @@ const A = {
   detail(id) { openTrip(id); },
   next() { CUR = null; S.status = ONLINE ? 'searching' : 'offline'; presence(); onRides(RIDES); },
   chat() { openChat(); },
-  speed() { SPEED = SPEED === 1 ? 20 : 1; toast(SPEED === 1 ? '跳表恢復正常速度' : '示範快轉：跳表速度 ×20'); render(); }
+
 };
 const meterAmount = () => meterFare();
 function statText() {
@@ -323,7 +325,6 @@ function statText() {
   return M.min >= CUR.mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(CUR.mins - M.min)) + ' 分鐘';
 }
 function srcText() {
-  if (SPEED !== 1) return '示範快轉中：里程為估算';
   if (usingGps()) return 'GPS 記錄中 · 已記錄 ' + GEO.track.length + ' 個點';
   return GEO.err || '等待 GPS 訊號…（請保持螢幕亮著）';
 }
@@ -471,8 +472,7 @@ function sheetHTML() {
         <div class="meter-rate">起跳 50 · 每公里 20 · 每分鐘 2 · 最低 100</div>
       </div>
       <div class="row"><p class="sub">乘客：${esc(r.riderName || '乘客')}</p>
-        <div style="display:flex;gap:8px"><button class="outline" data-a="speed" style="font-size:13px;padding:0 12px">${SPEED === 1 ? '示範快轉' : '正常速度'}</button>
-        <button class="outline" data-a="chat" style="position:relative">傳訊息${badge()}</button></div></div>
+        <button class="outline" data-a="chat" style="position:relative">傳訊息${badge()}</button></div>
       <button class="btn" style="background:var(--ink)" data-a="complete">完成行程</button></div>`;
     }
     case 'done': return `<div class="card" style="gap:10px;max-height:calc(100vh - 200px);overflow:hidden">
@@ -540,7 +540,7 @@ function render() {
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
-    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + SPEED;
+    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread;
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track);
