@@ -194,11 +194,40 @@
     }));
     return rankRoads(by);
   }
+  // 內建路名（不用連網，馬上出現）：大路／大道排前面，再來是路、街，其他（巷、地名）排最後
+  function staticRoads(area) {
+    const names = (window.BBC_KHH_ROADS || {})[area];
+    if (!names || !names.length) return null;
+    let coords = {};
+    try { const c = JSON.parse(localStorage.getItem('bbc_roads_' + area) || 'null'); if (c && c.list) c.list.forEach(r => { coords[r.name] = r; }); } catch (e) {}
+    const rank = n => /大道$|大路$/.test(n) ? 1 : /[一二三四五六七八九十]路$/.test(n) ? 2 : /路$/.test(n) ? 3 : /街$/.test(n) ? 5 : 7;
+    return names.map(n => ({ name: n, lat: coords[n] ? coords[n].lat : null, lng: coords[n] ? coords[n].lng : null, rank: rank(n) }))
+      .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'zh-Hant'));
+  }
+  // 查某條路的位置：先看存過的，再用 Photon 找這一區裡的這條路，都找不到就用這一區的中心
+  async function roadCoord(area, name) {
+    const key = 'bbc_rc_' + area + name;
+    try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c) return c; } catch (e) {}
+    const ctr = areaCenter(area);
+    let best = null;
+    try {
+      const u = `https://photon.komoot.io/api/?limit=15&lat=${ctr[0]}&lon=${ctr[1]}&bbox=${ctr[1] - 0.15},${ctr[0] - 0.15},${ctr[1] + 0.15},${ctr[0] + 0.15}&q=` + encodeURIComponent('高雄市' + area + name);
+      const j = await (await fetchTimeout(u, null, 10000)).json();
+      const fs = (j.features || []).map(f => ({ lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], p: f.properties || {} }))
+        .filter(f => areaOf(f.lat, f.lng) === area || (f.p.district || '').includes(area));
+      best = fs.find(f => f.p.name === name && f.p.osm_key === 'highway') || fs.find(f => f.p.name === name) || fs.find(f => f.p.street === name);
+    } catch (e) {}
+    if (!best) return { lat: ctr[0], lng: ctr[1], approx: true };
+    const r = { lat: +best.lat.toFixed(6), lng: +best.lng.toFixed(6) };
+    try { localStorage.setItem(key, JSON.stringify(r)); } catch (e) {}
+    return r;
+  }
   // 讀取順序：記憶體 → 這台瀏覽器（30 天）→ 雲端資料庫（所有管理員共用，只要有人載過一次）→ OpenStreetMap → Photon 備用
   async function districtRoads(area, opts) {
     opts = opts || {};
     if (!area) return [];
     if (ROADS_MEM[area] && !opts.force) return ROADS_MEM[area];
+    if (!opts.force && !opts.online) { const st = staticRoads(area); if (st) return (ROADS_MEM[area] = st); }
     const save = (list, full) => {
       try { localStorage.setItem('bbc_roads_' + area, JSON.stringify({ t: Date.now(), list, full })); } catch (e) {}
       if (full) window.BBC.db.set('settings', 'roads_' + area, { list, updatedAt: Date.now() }).catch(() => {});
@@ -483,9 +512,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-21',
+    VERSION: '2026.11.03-22',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,   // 每 100 元車資回 10 點

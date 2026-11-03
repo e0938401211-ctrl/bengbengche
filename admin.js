@@ -173,6 +173,18 @@ function choose(k, x) {
   $('d-' + k).value = x.label;
   ROADPICK[k] = x.kind === 'road' ? x : null;
   $('sug-' + k).hidden = true; $('d-' + k).setAttribute('aria-expanded', 'false');
+  if (x.kind === 'road' && x.lat == null) {
+    // 內建路名還沒有座標：先放在這一區中心，查到這條路的位置後再移過去
+    const c = BBC.areaCenter(x.area); x.lat = c[0]; x.lng = c[1]; x.pending = true;
+    BBC.roadCoord(x.area, x.label).then(r => {
+      x.lat = r.lat; x.lng = r.lng; x.pending = false;
+      const rr = (ROADS[x.area] || []).find(y => y.name === x.label); if (rr) { rr.lat = r.lat; rr.lng = r.lng; }
+      if (ROADPICK[k] === x && $('d-' + k).value.startsWith(x.label)) {
+        setPick(k, x);
+        $('pickNote').textContent = r.approx ? '找不到「' + x.label + '」的精確位置，請拖曳大頭針到正確位置' : '已定位到「' + x.label + '」，可接著輸入門牌號碼，或拖曳大頭針微調';
+      }
+    });
+  }
   setPick(k, x);
   if (x.kind === 'road') { const inp = $('d-' + k); inp.value = x.label; SKIP_FOCUS[k] = document.activeElement !== inp; setTimeout(() => { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }, 0); $('pickNote').textContent = '已選「' + x.label + '」，可接著輸入門牌號碼，或拖曳大頭針到正確位置'; }
 }
