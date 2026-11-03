@@ -319,7 +319,7 @@ const A = {
     ACCEPTING = true; stopCountdown();
     ACCEPTING = false;
     if (!CUR || CUR.id !== r.id) return;   // 扣點時行程資料會更新，用編號比對
-    S.status = 'pickup'; S.unread = 0; CHAT = [];
+    S.status = 'pickup';
     db.set('rides', r.id, { status: 'pickup', acceptedAt: Date.now() }).then(() => presence()).catch(fail);
     render();
   },
@@ -539,6 +539,7 @@ function sheetHTML() {
       <div class="card center">${LOGO}<p class="h2">${ME ? esc(ME.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收管理平台的派單</p></div></div>`;
     case 'searching': return `<div class="card searching"><div class="track"><div class="fill"></div></div>
       <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div>
+      <button class="outline" data-a="chat" style="position:relative;align-self:flex-start">聯絡管理平台${badge()}</button>
       ${pointsLine()}</div>`;
     case 'request': return `<div class="req"><div class="row"><div class="chip">管理平台派單 · ${esc(r.id)}</div><div class="dim" id="cdText">剩 ${S.left} 秒</div></div>
       <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
@@ -555,15 +556,14 @@ function sheetHTML() {
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
       ${S.declining
         ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
-          <div class="whygrid"><button data-a="declineBusy">正在忙</button><button data-a="declinePlain">拒絕</button></div>
-          <button class="btn" style="background:#2D3833;height:48px;font-size:16px" data-a="cancelDecline">返回，我要接這張單</button></div>`
+          <div class="whygrid"><button data-a="declineBusy">正在忙</button><button data-a="declinePlain">拒絕</button></div></div>`
         : `<div style="display:flex;gap:10px"><button class="nobtn" data-a="askDecline">${ICON_X}<span>拒絕</span></button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div>`}</div>`;
     case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
       ${r.note ? `<p class="sub">備註：${esc(r.note)}</p>` : ''}
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
         <div style="flex:1;min-width:0"><div style="font-weight:500">${esc(r.riderName || '乘客')}</div><div class="sub" style="font-size:13px">${esc(r.riderPhone || '未留電話')}</div></div>
-        <button class="round flat" data-a="chat" aria-label="傳訊息給乘客" style="position:relative"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>${badge()}</button>
+        <button class="round flat" data-a="chat" aria-label="傳訊息給管理平台" style="position:relative"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>${badge()}</button>
       </div>
       <a class="navbtn" href="${BBC.navUrl(r.fromLat, r.fromLng, r.from, r.fromArea)}" target="_blank" rel="noopener"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>導航到上車點${r.fromLat != null ? '（精準位置）' : ''}</a>
       <button class="btn" style="background:var(--pink)" data-a="arrive">乘客已上車，開始跳表</button></div>`;
@@ -578,7 +578,7 @@ function sheetHTML() {
         <div class="meter-rate">起跳 50 · 每公里 20 · 每分鐘 2 · 最低 100</div>
       </div>
       <div class="row"><p class="sub">乘客：${esc(r.riderName || '乘客')}</p>
-        <button class="outline" data-a="chat" style="position:relative">傳訊息${badge()}</button></div>
+        <button class="outline" data-a="chat" style="position:relative">聯絡管理平台${badge()}</button></div>
       ${BBC.hasDest(r) ? `<a class="navbtn" href="${BBC.navUrl(r.toLat, r.toLng, r.to, r.toArea)}" target="_blank" rel="noopener"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>導航到下車點</a>` : ''}
       <button class="btn" style="background:var(--ink)" data-a="complete">完成行程</button></div>`;
     }
@@ -636,7 +636,6 @@ function earnHTML() {
 }
 
 function render() {
-  if (S.status !== 'pickup' && S.status !== 'trip') $('chat').hidden = true;
   const r = CUR;
   $('mapLbl2').textContent = '高雄市';
   showStopPins();
@@ -670,7 +669,7 @@ function seg(mode) {
 function showAuth(msg) {
   stopCountdown(); stopMeter(); clearInterval(beatT); GEO.rec = false; stopLocate();
   if (unsubR) unsubR(); if (unsubD) unsubD(); if (unsubL) unsubL(); unsubR = unsubD = unsubL = null; LEDGER = [];
-  ME = null; CUR = null; ONLINE = false; S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };
+  ME = null; CUR = null; ONLINE = false; MSG_SEEN = null; S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };
   $('profile').hidden = true; $('auth').hidden = false;
   seg('login');
   if (msg) $('loginErr').textContent = msg;
@@ -689,6 +688,7 @@ function enter(d) {
     if (!me) return;   // 名單裡暫時找不到自己時不登出（被刪除的帳號下次登入時會被擋下）
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
     ME = withPhone(me);
+    onMsgs();
   });
   unsubR = db.watch('rides', onRides);
   unsubL = db.watch('ledger', list => { LEDGER = list; if (S.tab === 'points' || S.status === 'searching') render(); }, ['driverPhone', ME.phone]);
@@ -759,40 +759,40 @@ $('reg-seats').addEventListener('change', () => { if ($('reg-seats').value !== '
 $('reg-fuel').addEventListener('change', () => { if ($('reg-fuel').value === '純電動') $('reg-service').value = '蹦蹦車綠能（電動車）'; });
 
 
-// ---------- 和乘客聊天（示範：乘客自動回覆） ----------
-let CHAT = [], VOICE = false, riderT = null;
-const QUICK = ['我到了，在路邊等您', '大約 3 分鐘到', '請問您穿什麼顏色的衣服？', '路上有點塞車，請稍等', '好的，收到'];
-function riderReply(t) {
-  if (/到了|路邊/.test(t)) return '好，我馬上出來！';
-  if (/顏色|衣服/.test(t)) return '我穿藍色外套，站在便利商店前面';
-  if (/塞車/.test(t)) return '沒關係，謝謝告知';
-  if (/分鐘|稍等/.test(t)) return '好的，不急，慢慢來';
-  if (/收到|好的/.test(t)) return '謝謝司機';
-  return '好的，謝謝';
-}
+// ---------- 和管理平台傳訊息（存在司機自己的資料裡：msgs，管理端也看得到） ----------
+let VOICE = false, MSG_SEEN = null;
+const QUICK = ['已到上車點，乘客還沒出現', '乘客聯絡不上', '路上塞車，會晚一點到', '乘客要更改下車地點', '收到'];
+const myMsgs = () => (ME && ME.msgs) || [];
+const unreadAdmin = () => myMsgs().filter(m => m.f === 'a' && m.at > ((ME && ME.readD) || 0)).length;
 function speak(text) {
   if (!VOICE) return;
   try { const u = new SpeechSynthesisUtterance(text); u.lang = 'zh-TW'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (err) {}
 }
 function renderChat() {
-  const box = $('msgs');
-  box.innerHTML = CHAT.length
-    ? CHAT.map(m => `<div class="msg ${m.me ? 'me' : 'them'}">${esc(m.text)}</div>`).join('')
-    : '<p class="sub" style="text-align:center;margin:auto 0">還沒有訊息。點下方的常用語可以快速傳送。</p>';
+  const box = $('msgs'), list = myMsgs();
+  box.innerHTML = list.length
+    ? list.map(m => `<div class="msg ${m.f === 'd' ? 'me' : 'them'}">${esc(m.t)}<span class="mt">${BBC.hhmm(m.at)}</span></div>`).join('')
+    : '<p class="sub" style="text-align:center;margin:auto 0">還沒有訊息。有狀況可以在這裡通知管理平台，點下方常用語可以快速傳送。</p>';
   box.scrollTop = box.scrollHeight;
 }
-function openChat() { S.unread = 0; $('chatName').textContent = (CUR && CUR.riderName) || '乘客'; $('chat').hidden = false; renderChat(); render(); }
-function closeChat() { $('chat').hidden = true; clearTimeout(riderT); }
-function riderSay(text) {
-  if (S.status !== 'pickup' && S.status !== 'trip') return;
-  CHAT.push({ me: false, text });
-  if ($('chat').hidden) { S.unread += 1; render(); } else renderChat();
-  speak(((CUR && CUR.riderName) || '乘客') + '說：' + text);
+function markRead() { if (!ME) return; const now = Date.now(); ME.readD = now; db.set('drivers', ME.phone, { readD: now }).catch(() => {}); S.unread = 0; }
+function openChat() { $('chatName').textContent = '管理平台'; $('chat').hidden = false; markRead(); renderChat(); render(); }
+function closeChat() { $('chat').hidden = true; }
+// 司機資料更新時呼叫：有新的管理員訊息就提醒
+function onMsgs() {
+  const list = myMsgs(), last = list.length ? list[list.length - 1].at : 0;
+  if (MSG_SEEN != null) list.filter(m => m.f === 'a' && m.at > MSG_SEEN).forEach(m => { speak('管理平台說：' + m.t); if ($('chat').hidden) toast('管理平台：' + m.t); });
+  MSG_SEEN = Math.max(MSG_SEEN || 0, last);
+  if (!$('chat').hidden) { if (unreadAdmin()) markRead(); renderChat(); }
+  const u = $('chat').hidden ? unreadAdmin() : 0;
+  if (u !== S.unread) { S.unread = u; render(); }
 }
 function sendMsg(text) {
-  text = text.trim(); if (!text) return;
-  CHAT.push({ me: true, text }); renderChat();
-  clearTimeout(riderT); riderT = setTimeout(() => riderSay(riderReply(text)), 1500);
+  text = text.trim(); if (!text || !ME) return;
+  const m = { f: 'd', t: text.slice(0, 300), at: Date.now() };
+  ME.msgs = myMsgs().concat(m).slice(-80); MSG_SEEN = m.at;
+  renderChat();
+  db.set('drivers', ME.phone, { msgs: ME.msgs, msgAtD: m.at, readD: m.at }).catch(fail);
 }
 $('quick').innerHTML = QUICK.map(q => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('');
 $('chatForm').addEventListener('submit', e => { e.preventDefault(); sendMsg($('chatInput').value); $('chatInput').value = ''; });

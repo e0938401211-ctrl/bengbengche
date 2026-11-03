@@ -125,6 +125,7 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 /* chat */
 .chat { position: absolute; inset: 0; z-index: 16; background: var(--page); display: flex; flex-direction: column; }
 .chat[hidden] { display: none !important; }
+.msg .mt { display: block; font-size: 11px; opacity: .6; margin-top: 2px; }
 .chat-head { display: flex; align-items: center; gap: 12px; padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--white); border-bottom: 1px solid var(--line); }
 .msgs { flex: 1; overflow-y: auto; padding-block: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 8px; }
 .msg { max-width: 78%; padding: 10px 14px; border-radius: 18px; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -252,10 +253,10 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
     <p class="hint" id="modeHint"></p>
   </section>
 
-  <section class="chat" id="chat" hidden aria-label="和乘客聊天">
+  <section class="chat" id="chat" hidden aria-label="和管理平台傳訊息">
     <div class="chat-head">
       <button class="round flat" id="chatClose" aria-label="返回"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121A17" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
-      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:17px" id="chatName"></div><div class="sub" style="font-size:12px">示範：乘客為自動回覆</div></div>
+      <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:17px" id="chatName"></div><div class="sub" style="font-size:12px">訊息會傳到管理平台（派車中心）</div></div>
       <button class="voice" id="voiceBtn" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg>朗讀訊息</button>
     </div>
     <div class="msgs" id="msgs" aria-live="polite"></div>
@@ -292,11 +293,11 @@ button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
 
-<script src="config.js?v=202611032212"></script>
+<script src="config.js?v=202611032214"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="data.js?v=202611032212"></script>
-<script src="driver.js?v=202611032212"></script>
+<script src="data.js?v=202611032214"></script>
+<script src="driver.js?v=202611032214"></script>
 </body>
 </html>
