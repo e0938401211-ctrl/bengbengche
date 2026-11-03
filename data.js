@@ -162,11 +162,22 @@
 
   // ---------- 路線地圖（Leaflet + OpenStreetMap） ----------
   // track: [[緯度, 經度], ...]
-  // 乾淨的淺色底圖（CARTO Voyager，資料來自 OpenStreetMap）
-  function addTiles(map) {
-    return L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO'
-    }).addTo(map);
+  // 底圖：OpenStreetMap（不需金鑰、有中文路名）；載入失敗太多次自動改用 Esri 街道圖
+  const TILE_SOURCES = [
+    { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', opt: { maxZoom: 19, attribution: '© OpenStreetMap' } },
+    { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opt: { maxZoom: 19, attribution: '© Esri' } }
+  ];
+  function addTiles(map, idx) {
+    idx = idx || 0;
+    const src = TILE_SOURCES[idx];
+    const layer = L.tileLayer(src.url, src.opt).addTo(map);
+    let errors = 0, loaded = 0;
+    layer.on('tileload', () => { loaded++; });
+    layer.on('tileerror', () => {
+      errors++;
+      if (errors >= 4 && loaded === 0 && idx + 1 < TILE_SOURCES.length) { map.removeLayer(layer); addTiles(map, idx + 1); }
+    });
+    return layer;
   }
   const ROUTE_RED = '#E5352B';
   // 紅色大頭針
@@ -261,7 +272,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-12',
+    VERSION: '2026.11.03-13',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
