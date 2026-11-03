@@ -283,7 +283,7 @@ table.wtable, table.ltable { min-width: 720px; }
             <div class="field"><label for="d-km">公里數</label><input id="d-km" type="number" inputmode="decimal" min="0.5" step="0.1" placeholder="自動估算"></div>
           </div>
           <div class="f2">
-            <div class="field"><label for="d-fee">回金點數（司機接單時扣）</label><input id="d-fee" type="number" inputmode="numeric" min="0" step="1"></div>
+            <div class="field"><label for="d-fee">回金：每 100 元車資回幾點</label><input id="d-fee" type="number" inputmode="numeric" min="0" step="1"></div>
             <div class="field"><label>&nbsp;</label><span class="sub" style="padding-top:12px" id="feeHint"></span></div>
           </div>
           <div class="est" id="estBox" aria-live="polite"><span>填好上下車地址後會顯示預估</span></div>
@@ -316,10 +316,10 @@ table.wtable, table.ltable { min-width: 720px; }
 
     <!-- 儲值 -->
     <section class="box" id="secWallet" aria-labelledby="walletTitle">
-      <div class="boxhead"><h2 id="walletTitle">儲值與點數</h2><span class="sub">1 點 = 1 元 · 司機接單時扣回金，取消行程自動退還</span></div>
+      <div class="boxhead"><h2 id="walletTitle">儲值與點數</h2><span class="sub">1 點 = 1 元 · 行程結束時依車資扣回金（例：每 100 元回 10 點，車資 155 元扣 15 點）</span></div>
       <div class="banner" id="rulesBanner" hidden><span><b>需要更新 Firebase 規則：</b>儲值功能用到新的資料表。請到 Firebase → Firestore Database → 規則，把 coll in [...] 那一行換成<br><code>allow read, write: if coll in ['bbc_drivers', 'bbc_rides', 'bbc_admins', 'bbc_ledger', 'bbc_settings'];</code><br>再按「發布」。</span></div>
       <form class="form" id="feeForm" novalidate style="flex-direction:row;flex-wrap:wrap;align-items:flex-end;gap:10px">
-        <div class="field" style="flex:0 1 220px"><label for="s-fee">預設回金點數（每張單）</label><input id="s-fee" type="number" inputmode="numeric" min="0" step="1"></div>
+        <div class="field" style="flex:0 1 220px"><label for="s-fee">預設回金點數（每張單）：每 100 元車資回幾點</label><input id="s-fee" type="number" inputmode="numeric" min="0" step="1"></div>
         <button class="sbtn primary" type="submit" style="height:42px">儲存預設值</button>
         <span class="sub" id="feeSaved"></span>
       </form>
@@ -350,11 +350,11 @@ table.wtable, table.ltable { min-width: 720px; }
 <div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=202611032036"></script>
+<script src="config.js?v=202611032052"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="data.js?v=202611032036"></script>
-<script src="admin.js?v=202611032036"></script>
+<script src="data.js?v=202611032052"></script>
+<script src="admin.js?v=202611032052"></script>
 </body>
 </html>

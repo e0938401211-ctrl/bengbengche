@@ -384,12 +384,16 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-18',
+    VERSION: '2026.11.03-19',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
-    LEDGER_TEXT: { topup: '儲值', commission: '接單回金', refund: '取消退點', deduct: '扣點', adjust: '調整' },
-    DEFAULT_COMMISSION: 30,
+    LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
+    DEFAULT_RATE: 10,   // 每 100 元車資回 10 點
+    // 回金 = 車資 × 每百元回金 ÷ 100，小數捨去（例：車資 155、每百元 10 點 → 15 點）
+    commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),
+    // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）
+    rideRate: r => r && r.commissionRate != null ? Number(r.commissionRate) : null,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };

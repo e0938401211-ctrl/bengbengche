@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'assigned', 'pickup', 'trip'];
 
-let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commission: BBC.DEFAULT_COMMISSION };
+let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE };
 let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
 let unsub = [];
@@ -57,7 +57,7 @@ function enter(a) {
   unsub.push(db.watch('rides', l => { RIDES = l; renderAll(); }));
   unsub.push(db.watch('drivers', l => { JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver); renderAll(); }));
   unsub.push(db.watch('ledger', l => { LEDGER = l; $('rulesBanner').hidden = true; renderWallet(); }));
-  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commission: BBC.DEFAULT_COMMISSION }, m); applyFeeDefault(); renderWallet(); }));
+  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE }); applyFeeDefault(); renderWallet(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
   renderAll();
 }
@@ -68,24 +68,28 @@ const todayStart = () => BBC.startOfDay();
 function available(excludePhones) {
   return DRIVERS.filter(d => state(d) === 'online' && !(excludePhones || []).includes(d.phone || d.id));
 }
-const feeNow = () => { const v = parseInt($('d-fee').value, 10); return v >= 0 ? v : (SETTINGS.commission || 0); };
-const enoughPoints = (d, fee) => (d.balance || 0) >= (fee || 0);
+// feeNow：這張單的每百元回金點數；needFor：依預估車資（沒有就用最低車資）算出接單需要的點數
+const feeNow = () => { const v = parseInt($('d-fee').value, 10); return v >= 0 ? v : (SETTINGS.commissionRate || 0); };
+const needFor = (rate, estFare) => BBC.commissionOf(estFare || BBC.RATE.min, rate);
+const enoughPoints = (d, need) => (d.balance || 0) >= (need || 0);
+const curNeed = () => { const e = currentEstimate(); return needFor(feeNow(), e && e.estFare); };
 // 司機的 GPS 位置 5 分鐘內有更新才算數
 const freshLoc = d => d.lat != null && d.lng != null && Date.now() - (d.locAt || 0) < 5 * 60000;
 const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
 function nearestDriver(fromText, fromArea, exclude, feeArg, coords) {
   const p = coords || BBC.locate(fromText, fromArea).c;
-  const fee = feeArg != null ? feeArg : feeNow();
+  const fee = feeArg != null ? feeArg : curNeed();
   const list = available(exclude).filter(d => enoughPoints(d, fee)).map(d => ({ d, km: driverKm(d, p) ?? 9999 })).sort((a, b) => a.km - b.km);
   return list[0] ? list[0].d : null;
 }
-function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords) {
+function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needArg) {
+  const need = needArg != null ? needArg : curNeed();
   const list = available(exclude);
   const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
   let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（GPS）</option>' : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km（GPS）' : freshLoc(d) ? '' : ' · 未定位'} · ${fmt(d.balance || 0)} 點${enoughPoints(d, feeNow()) ? '' : '（點數不足）'}</option>`).join('')
+    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km（GPS）' : freshLoc(d) ? '' : ' · 未定位'} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -212,13 +216,13 @@ $('dispatchForm').addEventListener('submit', async e => {
   const est = currentEstimate();
   let pick = $('d-driver').value, drv = null;
   if (pick === '__auto') {
-    drv = nearestDriver(from, $('d-from-area').value, [], feeNow(), pickCoord('from'));
+    drv = nearestDriver(from, $('d-from-area').value, [], curNeed(), pickCoord('from'));
     if (!drv) return err.textContent = '目前沒有點數足夠的線上空車司機，可以改選「稍後指派」或先幫司機儲值';
   } else if (pick) drv = DRIVERS.find(d => d.id === pick);
   const now = Date.now();
   const ride = Object.assign({
     source: 'admin', createdBy: ADMIN.id, riderName: $('d-rider').value.trim() || '乘客', riderPhone: $('d-phone').value.trim(),
-    note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commission: feeNow(),
+    note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commissionRate: feeNow(),
     fromLat: PICK.from ? PICK.from.lat : null, fromLng: PICK.from ? PICK.from.lng : null,
     toLat: to && PICK.to ? PICK.to.lat : null, toLng: to && PICK.to ? PICK.to.lng : null,
     status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
@@ -239,10 +243,10 @@ $('dispatchForm').addEventListener('submit', async e => {
 
 async function assign(rideId, phone) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
-  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, r.commission || 0, BBC.fromCoord(r)) : DRIVERS.find(x => x.id === phone);
+  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, rideNeed(r), BBC.fromCoord(r)) : DRIVERS.find(x => x.id === phone);
   if (!d) return toast(phone === '__auto' ? '目前沒有可派的線上司機' : '請先選擇司機');
   if (state(d) !== 'online') return toast(d.name + ' 目前不是線上空車，無法派單');
-  if (!enoughPoints(d, r.commission || 0)) return toast(`${d.name} 只剩 ${fmt(d.balance || 0)} 點，不夠這張單的回金 ${r.commission} 點，請先儲值`);
+  if (!enoughPoints(d, rideNeed(r))) return toast(`${d.name} 只剩 ${fmt(d.balance || 0)} 點，不夠這張單預估的回金 ${rideNeed(r)} 點，請先儲值`);
   try {
     await db.set('rides', rideId, { status: 'assigned', driverPhone: d.id, driverName: d.name || d.id, plate: d.plate || '', assignedAt: Date.now() });
     toast(`行程 ${rideId} 已派給 ${d.name}`);
@@ -306,12 +310,12 @@ function renderRides() {
   const keep = {};
   document.querySelectorAll('[data-pick]').forEach(s => { keep[s.dataset.pick] = s.value; });
   $('rideList').innerHTML = list.map(r => {
-    const money = r.status === 'done' ? `<b>NT$${fmt(r.finalFare)}</b><span class="t">實收 · ${esc(r.finalKm || r.km)} km</span>`
+    const money = r.status === 'done' ? `<b>NT$${fmt(r.finalFare)}</b><span class="t">實收 · ${esc(r.finalKm != null ? r.finalKm : (r.km || 0))} km</span>`
       : r.status === 'trip' ? (lv => `<b>NT$${fmt(lv.fare)}</b><span class="t">跳表中 · ${lv.km.toFixed(1)} km · ${BBC.clock(lv.min)}</span>`)(liveMeter(r))
       : r.estFare == null ? `<b>跳表計費</b><span class="t">未指定下車地點</span>` : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
-      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea, BBC.fromCoord(r)).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
+      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea, BBC.fromCoord(r), rideNeed(r)).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（GPS）</option>')}</select>
         <button class="sbtn primary" type="button" data-assign="${esc(r.id)}">派單</button>
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
@@ -337,7 +341,7 @@ function renderRides() {
         ${r.note ? `<div class="t">備註：${esc(r.note)}</div>` : ''}
       </div>
       <div class="who2">乘客 <b style="color:var(--ink)">${esc(r.riderName)}</b>${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''}<br>司機 ${r.driverName ? `<b style="color:var(--ink)">${esc(r.driverName)}</b> · ${esc(r.plate)}` : '—'}</div>
-      <div class="money">${money}${r.commission ? `<span class="t" style="display:block">回金 ${fmt(r.commission)} 點${r.commissionRefundLedger ? '（已退還）' : r.commissionLedger ? '（已扣）' : r.commissionError ? '（未扣成功，請更新規則後手動扣點）' : ''}</span>` : ''}</div>
+      <div class="money">${money}${commissionText(r)}</div>
       <div class="actions">${act}</div>
     </article>`;
   }).join('');
@@ -574,16 +578,16 @@ function fitDriverMap() {
 // ---------- 儲值與點數 ----------
 function applyFeeDefault() {
   if (!$('d-fee')) return;
-  if (!feeTouched) $('d-fee').value = SETTINGS.commission || 0;
-  if (document.activeElement !== $('s-fee')) $('s-fee').value = SETTINGS.commission || 0;
-  $('feeHint').textContent = '預設 ' + (SETTINGS.commission || 0) + ' 點，可改這張單';
+  if (!feeTouched) $('d-fee').value = SETTINGS.commissionRate;
+  if (document.activeElement !== $('s-fee')) $('s-fee').value = SETTINGS.commissionRate;
+  $('feeHint').textContent = '預設每 100 元回 ' + SETTINGS.commissionRate + ' 點，行程結束才扣';
 }
 $('d-fee').addEventListener('input', () => { feeTouched = true; updateEstimate(); });
 $('feeForm').addEventListener('submit', async e => {
   e.preventDefault();
   const v = parseInt($('s-fee').value, 10);
   if (!(v >= 0)) return $('feeSaved').textContent = '請輸入 0 以上的整數';
-  try { await db.set('settings', 'main', { commission: v, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = '已儲存：之後新派的單預設回金 ' + v + ' 點'; } catch (x) { fail(x); }
+  try { await db.set('settings', 'main', { commissionRate: v, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = '已儲存：之後新派的單，每 100 元車資回 ' + v + ' 點'; } catch (x) { fail(x); }
 });
 function renderWallet() {
   if (!ADMIN || !$('walletRows')) return;
@@ -593,10 +597,10 @@ function renderWallet() {
     const mine = LEDGER.filter(x => x.driverPhone === d.id);
     const today = mine.filter(x => x.type === 'commission' && x.createdAt >= t0).reduce((a, x) => a - x.amount, 0);
     const top = mine.filter(x => x.type === 'topup').reduce((a, x) => a + x.amount, 0);
-    const low = (d.balance || 0) < (SETTINGS.commission || 0);
+    const low = (d.balance || 0) < needFor(SETTINGS.commissionRate, 0);
     return `<tr>
       <td data-label="司機"><div class="name">${esc(d.name)}</div><div class="small">${esc(d.id)} · ${esc(d.plate || '')}</div></td>
-      <td data-label="目前點數" class="num"><b class="${low ? 'bal-low' : ''}" style="font-size:18px">${fmt(d.balance || 0)}</b>${low ? '<div class="small bal-low">不足一張單</div>' : ''}</td>
+      <td data-label="目前點數" class="num"><b class="${low ? 'bal-low' : ''}" style="font-size:18px">${fmt(d.balance || 0)}</b>${low ? '<div class="small bal-low">點數偏低</div>' : ''}</td>
       <td data-label="今日扣點" class="num">${fmt(today)}</td>
       <td data-label="累計儲值" class="num">${fmt(top)}</td>
       <td data-label="操作"><div class="rowact"><button class="sbtn primary" type="button" data-topup="${esc(d.id)}">儲值</button><button class="sbtn" type="button" data-deductpt="${esc(d.id)}">扣點</button><button class="sbtn" type="button" data-ledgerof="${esc(d.id)}">明細</button></div></td></tr>`;
@@ -640,6 +644,22 @@ function pointsDialog(id, mode) {
       closeModal(); toast(`${d.name}：${add ? '+' : '-'}${v} 點，目前 ${fmt(res.after)} 點`);
     } catch (x) { btn.disabled = false; console.error(x); if (x.code === 'insufficient') return err.textContent = `只剩 ${fmt(x.balance)} 點，不能扣到負數`; err.textContent = (x.code === 'permission-denied' ? '雲端規則還沒更新（見上方說明）' : '失敗：' + (x.code || x.message)); if (x.code === 'permission-denied') $('rulesBanner').hidden = false; }
   });
+}
+
+// 派單時預估要扣的點數（舊行程是固定點數）
+function rideNeed(r) {
+  const rate = BBC.rideRate(r);
+  if (rate != null) return needFor(rate, r.estFare);
+  return r.commission || 0;
+}
+function commissionText(r) {
+  const rate = BBC.rideRate(r);
+  if (rate != null) {
+    if (r.status === 'done') return `<span class="t" style="display:block">回金 ${fmt(r.commissionFee || BBC.commissionOf(r.finalFare, rate))} 點${r.commissionLedger ? '（已扣）' : '（扣點中）'}</span>`;
+    return rate ? `<span class="t" style="display:block">回金 每100元 ${fmt(rate)} 點</span>` : '';
+  }
+  if (!r.commission) return '';
+  return `<span class="t" style="display:block">回金 ${fmt(r.commission)} 點${r.commissionRefundLedger ? '（已退還）' : r.commissionLedger ? '（已扣）' : ''}</span>`;
 }
 
 async function cleanJunk() {

@@ -309,28 +309,14 @@ const A = {
   offline() { ONLINE = false; S.status = 'offline'; if (!GEO.rec) stopLocate(); presence(); render(); },
   async accept() {
     if (!CUR || ACCEPTING) return;
-    const r = CUR, fee = Math.max(0, Number(r.commission) || 0);
-    ACCEPTING = true; stopCountdown();
-    const btn = document.querySelector('[data-a=accept]'); if (btn) { btn.disabled = true; btn.textContent = fee ? '扣點中…' : '接單中…'; }
-    try {
-      if (fee) {
-        const res = await db.adjustBalance(ME.phone, -fee,
-          { type: 'commission', rideId: r.id, address: (r.fromArea ? r.fromArea + ' ' : '') + r.from, note: '接單回金' },
-          { noNegative: true, rideId: r.id, flag: 'commissionLedger' });
-        if (!res.skipped) toast(`已扣回金 ${fee} 點，剩餘 ${res.after} 點`);
-      }
-    } catch (e) {
-      ACCEPTING = false;
-      if (e.code === 'insufficient') { toast(`點數不足：這張單需要 ${fee} 點，你只剩 ${e.balance} 點，請聯絡管理員儲值`); A.decline(); return; }
-      if (e.code === 'permission-denied') {
-        // 雲端規則還沒加入點數資料表：先讓司機接單，不影響營運，並在行程上註記未扣點
-        toast('這張單暫時無法扣回金（雲端規則未更新），已先接單，請通知管理員');
-        db.set('rides', r.id, { commissionError: 'permission-denied' }).catch(() => {});
-      } else {
-        console.error(e); toast('接單失敗：' + (e.code || e.message) + '，請再按一次');
-        startRequest(); render(); return;
-      }
+    const r = CUR;
+    // 回金在行程結束才扣；接單時只確認點數夠扣這張單的預估回金
+    const need = estNeed(r);
+    if (need && balance() < need) {
+      toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
+      A.decline(); return;
     }
+    ACCEPTING = true; stopCountdown();
     ACCEPTING = false;
     if (!CUR || CUR.id !== r.id) return;   // 扣點時行程資料會更新，用編號比對
     S.status = 'pickup'; S.unread = 0; CHAT = [];
@@ -359,10 +345,13 @@ const A = {
     if (!CUR) return;
     stopMeter(); stopGPS(); closeChat();
     const rec = buildRecord(CUR, M.km, M.min);
+    const rate = BBC.rideRate(CUR);
+    rec.commissionFee = rate != null ? BBC.commissionOf(rec.finalFare, rate) : 0;
     Object.assign(CUR, rec);
     S.status = 'done';
     saveLocalTrip(Object.assign({ id: CUR.id }, CUR));          // 先存一份在手機
     uploadTrip(CUR.id, rec).then(() => presence({ status: ONLINE ? 'online' : 'offline', rideId: '' }));
+    if (rec.commissionFee > 0) chargeCommission(CUR.id, rec.commissionFee, rec.finalFare, rate, (CUR.fromArea ? CUR.fromArea + ' ' : '') + CUR.from);
     render();
   },
   detail(id) { openTrip(id); },
@@ -427,6 +416,21 @@ function retryPending() {
   if (!ME) return;
   const p = local.get(pendingKey(), {});
   Object.keys(p).forEach(id => db.set('rides', id, p[id]).then(() => markPending(id, p[id], false)).catch(() => {}));
+  const f = local.get(feeKey(), {});
+  Object.keys(f).forEach(id => chargeCommission(id, f[id].fee, f[id].fare, f[id].rate, f[id].address, true));
+}
+// ---------- 行程結束扣回金（同一趟只扣一次；網路不穩會先記在手機，連線後補扣） ----------
+const feeKey = () => 'fee_' + (ME ? ME.phone : '');
+function chargeCommission(rideId, fee, fare, rate, address, silent) {
+  const f = local.get(feeKey(), {}); f[rideId] = { fee, fare, rate, address }; local.set(feeKey(), f);
+  return db.adjustBalance(ME.phone, -fee,
+    { type: 'commission', rideId, address, note: `車資 NT$${fare} · 每百元回 ${rate} 點` },
+    { rideId, flag: 'commissionLedger' })
+    .then(res => {
+      const g = local.get(feeKey(), {}); delete g[rideId]; local.set(feeKey(), g);
+      if (!res.skipped && !silent) toast(`已扣行程回金 ${fee} 點，剩餘 ${fmt(res.after)} 點`);
+    })
+    .catch(e => { console.error(e); if (!silent) toast('回金暫時沒扣到（' + (e.code || e.message) + '），連線後會自動補扣'); });
 }
 const dt = t => t ? new Date(t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
 function receiptHTML(r, mapId) {
@@ -454,6 +458,7 @@ function receiptHTML(r, mapId) {
     ${L('跳表金額', 'NT$' + fmt(meter))}
     ${top ? L('最低車資補足', '+NT$' + fmt(top)) : ''}
     <div class="line" style="padding:12px 0"><span style="font-weight:700">實收車資</span><b style="font-size:20px">NT$${fmt(r.finalFare)}</b></div>
+    ${r.commissionFee ? L('平台回金（每 100 元 ' + BBC.rideRate(r) + ' 點）', '-' + fmt(r.commissionFee) + ' 點') : ''}
     ${L('車輛', esc([r.plate, r.car, r.carColor].filter(Boolean).join(' · ') || '—'))}
   </div>`;
 }
@@ -485,8 +490,14 @@ function openTrip(id) {
 
 // ---------- 點數（儲值與回金） ----------
 const balance = () => (ME && ME.balance) || 0;
+// 接單前的預估回金：有預估車資就用預估，沒有就以最低車資計
+function estNeed(r) {
+  const rate = BBC.rideRate(r);
+  if (rate == null) return 0;
+  return BBC.commissionOf(r.estFare || BBC.RATE.min, rate);
+}
 function pointsLine() {
-  const b = balance(), need = BBC.DEFAULT_COMMISSION;
+  const b = balance(), need = BBC.commissionOf(BBC.RATE.min, BBC.DEFAULT_RATE);
   return `<div class="row" style="padding-top:2px"><span class="sub">點數餘額 <b style="color:${b < need ? '#B3261E' : 'var(--ink)'}">${fmt(b)} 點</b>${b < need ? '（偏低，接單可能不足）' : ''}</span><button class="outline" data-a="points" style="height:34px;font-size:13px">點數紀錄</button></div>`;
 }
 function pointsHTML() {
@@ -494,7 +505,7 @@ function pointsHTML() {
   const md = t => { const d = new Date(t); return (d.getMonth() + 1) + '/' + d.getDate() + '<br>' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
   const th = 'padding:8px 6px;border:1px solid var(--line);font-size:13px;font-weight:700;text-align:left;background:var(--white);position:sticky;top:0';
   const td = 'padding:10px 6px;border:1px solid var(--line);font-size:14px;vertical-align:middle;font-variant-numeric:tabular-nums';
-  return `<div><p class="sub">目前餘額</p><div class="fare">${fmt(balance())} <span style="font-size:20px">點</span></div><p class="sub" style="font-size:12px">1 點 = 1 元 · 接單時扣回金，行程被管理員取消會自動退還</p></div>
+  return `<div><p class="sub">目前餘額</p><div class="fare">${fmt(balance())} <span style="font-size:20px">點</span></div><p class="sub" style="font-size:12px">1 點 = 1 元 · 行程結束時依車資扣回金（每 100 元 10 點）</p></div>
     <div class="panel" style="padding:0;overflow:hidden">
       ${list.length ? `<table style="width:100%;border-collapse:collapse;table-layout:fixed">
         <thead><tr><th style="${th};width:19%">日期</th><th style="${th};width:17%">入扣帳</th><th style="${th};width:16%">當時餘額</th><th style="${th};width:16%">結算餘額</th><th style="${th}">地址</th></tr></thead>
@@ -526,7 +537,7 @@ function sheetHTML() {
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 下車地點依乘客指示</div>`
         : `<div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${fmt(r.estFare)}</div><div class="dim">預估車資（跳表計費）</div></div>
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 約 ${esc(r.km)} 公里 / ${esc(r.mins)} 分鐘</div>`}
-      ${r.commission ? `<div class="dim" style="font-size:14px">接單扣回金 <b style="color:var(--yellow)">${fmt(r.commission)} 點</b> · 目前餘額 ${fmt(balance())} 點${balance() < r.commission ? '（不足，請先儲值）' : ''}</div>` : ''}
+      ${BBC.rideRate(r) ? `<div class="dim" style="font-size:14px">行程結束扣回金：每 100 元 <b style="color:var(--yellow)">${fmt(BBC.rideRate(r))} 點</b>${r.estFare ? '（預估約 ' + estNeed(r) + ' 點）' : ''} · 目前餘額 ${fmt(balance())} 點${balance() < estNeed(r) ? '（不足，請先儲值）' : ''}</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:10px">
         <div class="stop"><div class="dot" style="background:#fff;border-radius:50%"></div><div>${esc(r.fromArea)} ${esc(r.from)}</div></div>
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
