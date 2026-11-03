@@ -1,10 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 蹦蹦車測試版：只開放 bbc_ 開頭的三個集合。
+    // 蹦蹦車測試版：只開放 bbc_ 開頭的五個集合。
     // 注意：這是測試用規則，任何拿到網址的人都能讀寫。正式營運前要改用 Firebase Authentication。
     match /{coll}/{doc} {
-      allow read, write: if coll in ['bbc_drivers', 'bbc_rides', 'bbc_admins'];
+      allow read, write: if coll in ['bbc_drivers', 'bbc_rides', 'bbc_admins', 'bbc_ledger', 'bbc_settings'];
     }
   }
 }

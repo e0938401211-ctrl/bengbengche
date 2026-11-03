@@ -128,15 +128,29 @@
     });
     return {
       mode: 'local',
-      watch(c, fn) {
-        (listeners[c] = listeners[c] || []).push(fn);
+      watch(c, fn, where) {
+        const f = where ? list => fn(list.filter(x => x[where[0]] === where[1])) : fn;
+        (listeners[c] = listeners[c] || []).push(f);
         setTimeout(() => emit(c), 0);  // 示範模式沒有快取問題
-        return () => { listeners[c] = listeners[c].filter(f => f !== fn); };
+        return () => { listeners[c] = listeners[c].filter(x => x !== f); };
       },
       async get(c, id) { if (!id) throw new Error('資料編號錯誤'); const o = read(c); return o[id] ? Object.assign({ id }, o[id]) : null; },
       async set(c, id, data) { if (!id) throw new Error('資料編號錯誤'); const o = read(c); o[id] = Object.assign({}, o[id] || {}, data); write(c, o); },
       async add(c, data) { const id = rideNo(); const o = read(c); o[id] = data; write(c, o); return id; },
-      async remove(c, id) { const o = read(c); delete o[id]; write(c, o); }
+      async remove(c, id) { const o = read(c); delete o[id]; write(c, o); },
+      async adjustBalance(phone, delta, entry, opts) {
+        opts = opts || {};
+        const D = read('drivers'), d = D[phone];
+        if (!d) throw Object.assign(new Error('找不到司機帳號'), { code: 'not-found' });
+        if (opts.rideId && opts.flag) { const R = read('rides'); if (R[opts.rideId] && R[opts.rideId][opts.flag]) return { skipped: true }; }
+        const before = d.balance || 0, after = before + delta;
+        if (opts.noNegative && after < 0) throw Object.assign(new Error('點數不足'), { code: 'insufficient', balance: before });
+        d.balance = after; write('drivers', D);
+        const id = rideNo(), L = read('ledger');
+        L[id] = Object.assign({}, entry, { driverPhone: phone, amount: delta, before, after, createdAt: Date.now() }); write('ledger', L);
+        if (opts.rideId && opts.flag) { const R = read('rides'); if (R[opts.rideId]) { R[opts.rideId][opts.flag] = id; write('rides', R); } }
+        return { before, after, id };
+      }
     };
   }
 
@@ -154,8 +168,8 @@
     const dec = (id, data) => { const o = Object.assign({ id }, data); if (Array.isArray(o.track)) o.track = o.track.map(p => p && !Array.isArray(p) && p.lat != null ? [p.lat, p.lng] : p); return o; };
     return {
       mode: 'cloud',
-      watch(c, fn) {
-        return col(c).onSnapshot(
+      watch(c, fn, where) {
+        return (where ? col(c).where(where[0], '==', where[1]) : col(c)).onSnapshot(
           s => fn(s.docs.map(d => dec(d.id, d.data())), { fromCache: s.metadata.fromCache }),
           err => { console.error('Firestore', err); if (window.BBC.onError) window.BBC.onError(err); }
         );
@@ -163,7 +177,24 @@
       async get(c, id) { const d = await ref(c, id).get(); return d.exists ? dec(d.id, d.data()) : null; },
       async set(c, id, data) { await ref(c, id).set(enc(data), { merge: true }); },
       async add(c, data) { const id = rideNo(); await ref(c, id).set(enc(data)); return id; },
-      async remove(c, id) { await ref(c, id).delete(); }
+      async remove(c, id) { await ref(c, id).delete(); },
+      // 點數增減用交易處理：同時更新餘額與寫入明細；同一趟行程只扣（或退）一次；可要求餘額不得為負
+      async adjustBalance(phone, delta, entry, opts) {
+        opts = opts || {};
+        const dref = ref('drivers', phone), lref = ref('ledger', rideNo());
+        const rref = opts.rideId && opts.flag ? ref('rides', opts.rideId) : null;
+        return fs.runTransaction(async t => {
+          const ds = await t.get(dref);
+          if (!ds.exists) throw Object.assign(new Error('找不到司機帳號'), { code: 'not-found' });
+          if (rref) { const rs = await t.get(rref); if (rs.exists && rs.data()[opts.flag]) return { skipped: true }; }
+          const before = ds.data().balance || 0, after = before + delta;
+          if (opts.noNegative && after < 0) throw Object.assign(new Error('點數不足'), { code: 'insufficient', balance: before });
+          t.set(dref, { balance: after }, { merge: true });
+          t.set(lref, enc(Object.assign({}, entry, { driverPhone: phone, amount: delta, before, after, createdAt: Date.now() })));
+          if (rref) t.set(rref, { [opts.flag]: lref.id }, { merge: true });
+          return { before, after, id: lref.id };
+        });
+      }
     };
   }
 
@@ -279,10 +310,12 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-15',
+    VERSION: '2026.11.03-16',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, ONLINE_STALE_MS,
+    LEDGER_TEXT: { topup: '儲值', commission: '接單回金', refund: '取消退點', deduct: '扣點', adjust: '調整' },
+    DEFAULT_COMMISSION: 30,
     STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };

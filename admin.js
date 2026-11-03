@@ -6,7 +6,8 @@ const $ = id => document.getElementById(id);
 const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'assigned', 'pickup', 'trip'];
 
-let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [];
+let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commission: BBC.DEFAULT_COMMISSION };
+let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
 let unsub = [];
 
@@ -20,7 +21,7 @@ function toast(msg) {
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3200);
 }
 const fail = e => { console.error(e); toast('失敗：' + ((e && (e.code || e.message)) || '請檢查網路後再試一次')); };
-BBC.onError = err => toast('雲端資料庫拒絕存取：' + (err.code || err.message) + '（請檢查 Firestore 規則）');
+BBC.onError = err => { if (err.code === 'permission-denied') { const b = document.getElementById('rulesBanner'); if (b) b.hidden = false; } toast('雲端資料庫拒絕存取：' + (err.code || err.message) + '（請檢查 Firestore 規則）'); };
 
 // ---------- 登入 ----------
 async function ensureDefaultAdmin() {
@@ -55,6 +56,8 @@ function enter(a) {
   $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
   unsub.push(db.watch('rides', l => { RIDES = l; renderAll(); }));
   unsub.push(db.watch('drivers', l => { JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver); renderAll(); }));
+  unsub.push(db.watch('ledger', l => { LEDGER = l; $('rulesBanner').hidden = true; renderWallet(); }));
+  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commission: BBC.DEFAULT_COMMISSION }, m); applyFeeDefault(); renderWallet(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
   renderAll();
 }
@@ -65,12 +68,15 @@ const todayStart = () => BBC.startOfDay();
 function available(excludePhones) {
   return DRIVERS.filter(d => state(d) === 'online' && !(excludePhones || []).includes(d.phone || d.id));
 }
+const feeNow = () => { const v = parseInt($('d-fee').value, 10); return v >= 0 ? v : (SETTINGS.commission || 0); };
+const enoughPoints = (d, fee) => (d.balance || 0) >= (fee || 0);
 // 司機的 GPS 位置 5 分鐘內有更新才算數
 const freshLoc = d => d.lat != null && d.lng != null && Date.now() - (d.locAt || 0) < 5 * 60000;
 const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
 function nearestDriver(fromText, fromArea, exclude) {
   const p = BBC.locate(fromText, fromArea).c;
-  const list = available(exclude).map(d => ({ d, km: driverKm(d, p) ?? 9999 })).sort((a, b) => a.km - b.km);
+  const fee = arguments[3] != null ? arguments[3] : feeNow();
+  const list = available(exclude).filter(d => enoughPoints(d, fee)).map(d => ({ d, km: driverKm(d, p) ?? 9999 })).sort((a, b) => a.km - b.km);
   return list[0] ? list[0].d : null;
 }
 function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
@@ -79,7 +85,7 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea) {
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
   let html = withAuto ? '<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（GPS）</option>' : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km（GPS）' : freshLoc(d) ? '' : ' · 未定位'}</option>`).join('')
+    ? rows.map(({ d, km }) => `<option value="${esc(d.id)}"${sel === d.id ? ' selected' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km（GPS）' : freshLoc(d) ? '' : ' · 未定位'} · ${fmt(d.balance || 0)} 點${enoughPoints(d, feeNow()) ? '' : '（點數不足）'}</option>`).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -120,13 +126,13 @@ $('dispatchForm').addEventListener('submit', async e => {
   const est = currentEstimate();
   let pick = $('d-driver').value, drv = null;
   if (pick === '__auto') {
-    drv = nearestDriver(from, $('d-from-area').value, []);
-    if (!drv) return err.textContent = '目前沒有線上空車的司機，可以改選「稍後指派」';
+    drv = nearestDriver(from, $('d-from-area').value, [], feeNow());
+    if (!drv) return err.textContent = '目前沒有點數足夠的線上空車司機，可以改選「稍後指派」或先幫司機儲值';
   } else if (pick) drv = DRIVERS.find(d => d.id === pick);
   const now = Date.now();
   const ride = Object.assign({
     source: 'admin', createdBy: ADMIN.id, riderName: $('d-rider').value.trim() || '乘客', riderPhone: $('d-phone').value.trim(),
-    note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now,
+    note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commission: feeNow(),
     status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
     assignedAt: drv ? now : 0
   }, est);
@@ -136,6 +142,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     err.textContent = '';
     toast(drv ? `行程 ${id} 已派給 ${drv.name}` : `行程 ${id} 已建立，放在待派單`);
     ['d-rider', 'd-phone', 'd-from', 'd-to', 'd-note', 'd-km'].forEach(i => { $(i).value = ''; });
+    feeTouched = false; applyFeeDefault();
     updateEstimate();
     if (isMobile()) { rideFilter = 'active'; setView('rides'); renderRides(); }
   } catch (x) { fail(x); err.textContent = '建立失敗：' + (x.code || x.message || '請再試一次'); }
@@ -143,9 +150,10 @@ $('dispatchForm').addEventListener('submit', async e => {
 
 async function assign(rideId, phone) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
-  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy) : DRIVERS.find(x => x.id === phone);
+  let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, r.commission || 0) : DRIVERS.find(x => x.id === phone);
   if (!d) return toast(phone === '__auto' ? '目前沒有可派的線上司機' : '請先選擇司機');
   if (state(d) !== 'online') return toast(d.name + ' 目前不是線上空車，無法派單');
+  if (!enoughPoints(d, r.commission || 0)) return toast(`${d.name} 只剩 ${fmt(d.balance || 0)} 點，不夠這張單的回金 ${r.commission} 點，請先儲值`);
   try {
     await db.set('rides', rideId, { status: 'assigned', driverPhone: d.id, driverName: d.name || d.id, plate: d.plate || '', assignedAt: Date.now() });
     toast(`行程 ${rideId} 已派給 ${d.name}`);
@@ -157,10 +165,18 @@ async function unassign(rideId) {
 function cancelRide(rideId) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
   modal(`<h3 id="modalTitle">取消行程 ${esc(r.id)}？</h3>
-    <p class="sub">${esc(r.fromArea)} ${esc(r.from)} → ${esc(BBC.toText(r))}${r.driverName ? '<br>司機 ' + esc(r.driverName) + ' 的 App 會立即收到通知。' : ''}</p>
+    <p class="sub">${esc(r.fromArea)} ${esc(r.from)} → ${esc(BBC.toText(r))}${r.driverName ? '<br>司機 ' + esc(r.driverName) + ' 的 App 會立即收到通知。' : ''}${r.commissionLedger ? '<br>司機已扣的回金 ' + fmt(r.commission) + ' 點會自動退還。' : ''}</p>
     <div class="mrow"><button class="sbtn" type="button" data-close>不要取消</button><button class="btn red" type="button" id="mOk">確定取消</button></div>`);
   $('mOk').onclick = async () => {
-    try { await db.set('rides', rideId, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: ADMIN.id }); closeModal(); toast('行程已取消'); } catch (x) { fail(x); }
+    try {
+      await db.set('rides', rideId, { status: 'cancelled', cancelledAt: Date.now(), cancelledBy: ADMIN.id });
+      let msg = '行程已取消';
+      if (r.commissionLedger && r.driverPhone && r.commission) {
+        const res = await db.adjustBalance(r.driverPhone, r.commission, { type: 'refund', rideId: r.id, address: (r.fromArea ? r.fromArea + ' ' : '') + r.from, note: '行程取消退還回金', by: ADMIN.id }, { rideId: r.id, flag: 'commissionRefundLedger' });
+        if (!res.skipped) msg += `，已退還 ${r.driverName} ${r.commission} 點`;
+      }
+      closeModal(); toast(msg);
+    } catch (x) { fail(x); }
   };
 }
 
@@ -232,7 +248,7 @@ function renderRides() {
         ${r.note ? `<div class="t">備註：${esc(r.note)}</div>` : ''}
       </div>
       <div class="who2">乘客 <b style="color:var(--ink)">${esc(r.riderName)}</b>${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''}<br>司機 ${r.driverName ? `<b style="color:var(--ink)">${esc(r.driverName)}</b> · ${esc(r.plate)}` : '—'}</div>
-      <div class="money">${money}</div>
+      <div class="money">${money}${r.commission ? `<span class="t" style="display:block">回金 ${fmt(r.commission)} 點${r.commissionRefundLedger ? '（已退還）' : r.commissionLedger ? '（已扣）' : r.commissionError ? '（未扣成功，請更新規則後手動扣點）' : ''}</span>` : ''}</div>
       <div class="actions">${act}</div>
     </article>`;
   }).join('');
@@ -285,7 +301,7 @@ function renderDrivers() {
 
 function renderAll() {
   if (!ADMIN) return;
-  renderKpis(); renderRides(); renderDrivers();
+  renderKpis(); renderRides(); renderDrivers(); renderWallet();
   if (document.activeElement !== $('d-driver')) updateEstimate();
 }
 setInterval(() => { if (ADMIN) { renderKpis(); renderDrivers(); } }, 10000);   // 更新「最後回報」與斷線判斷
@@ -466,6 +482,77 @@ function fitDriverMap() {
   if (pts.length) DMAP.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
 }
 
+// ---------- 儲值與點數 ----------
+function applyFeeDefault() {
+  if (!$('d-fee')) return;
+  if (!feeTouched) $('d-fee').value = SETTINGS.commission || 0;
+  if (document.activeElement !== $('s-fee')) $('s-fee').value = SETTINGS.commission || 0;
+  $('feeHint').textContent = '預設 ' + (SETTINGS.commission || 0) + ' 點，可改這張單';
+}
+$('d-fee').addEventListener('input', () => { feeTouched = true; updateEstimate(); });
+$('feeForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const v = parseInt($('s-fee').value, 10);
+  if (!(v >= 0)) return $('feeSaved').textContent = '請輸入 0 以上的整數';
+  try { await db.set('settings', 'main', { commission: v, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = '已儲存：之後新派的單預設回金 ' + v + ' 點'; } catch (x) { fail(x); }
+});
+function renderWallet() {
+  if (!ADMIN || !$('walletRows')) return;
+  const t0 = todayStart();
+  const rows = DRIVERS.slice().sort((a, b) => (a.balance || 0) - (b.balance || 0));
+  $('walletRows').innerHTML = rows.length ? rows.map(d => {
+    const mine = LEDGER.filter(x => x.driverPhone === d.id);
+    const today = mine.filter(x => x.type === 'commission' && x.createdAt >= t0).reduce((a, x) => a - x.amount, 0);
+    const top = mine.filter(x => x.type === 'topup').reduce((a, x) => a + x.amount, 0);
+    const low = (d.balance || 0) < (SETTINGS.commission || 0);
+    return `<tr>
+      <td data-label="司機"><div class="name">${esc(d.name)}</div><div class="small">${esc(d.id)} · ${esc(d.plate || '')}</div></td>
+      <td data-label="目前點數" class="num"><b class="${low ? 'bal-low' : ''}" style="font-size:18px">${fmt(d.balance || 0)}</b>${low ? '<div class="small bal-low">不足一張單</div>' : ''}</td>
+      <td data-label="今日扣點" class="num">${fmt(today)}</td>
+      <td data-label="累計儲值" class="num">${fmt(top)}</td>
+      <td data-label="操作"><div class="rowact"><button class="sbtn primary" type="button" data-topup="${esc(d.id)}">儲值</button><button class="sbtn" type="button" data-deductpt="${esc(d.id)}">扣點</button><button class="sbtn" type="button" data-ledgerof="${esc(d.id)}">明細</button></div></td></tr>`;
+  }).join('') : '<tr><td colspan="5"><div class="empty">還沒有司機帳號</div></td></tr>';
+  const opts = '<option value="">全部司機</option>' + DRIVERS.map(d => `<option value="${esc(d.id)}">${esc(d.name)}（${esc(d.id)}）</option>`).join('');
+  if ($('ledgerFilter').innerHTML !== opts) { $('ledgerFilter').innerHTML = opts; $('ledgerFilter').value = ledgerFilter; }
+  const name = id => (DRIVERS.find(d => d.id === id) || {}).name || id;
+  const list = LEDGER.filter(x => !ledgerFilter || x.driverPhone === ledgerFilter).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 300);
+  const dt = t => new Date(t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  $('ledgerRows').innerHTML = list.length ? list.map(x => `<tr>
+    <td data-label="日期" class="num">${dt(x.createdAt)}</td>
+    <td data-label="司機">${esc(name(x.driverPhone))}</td>
+    <td data-label="類型">${esc(BBC.LEDGER_TEXT[x.type] || x.type)}${x.rideId ? `<div class="small">${esc(x.rideId)}</div>` : ''}</td>
+    <td data-label="入扣帳" class="num ${x.amount >= 0 ? 'amt-plus' : 'amt-minus'}">${x.amount >= 0 ? '+' : ''}${fmt(x.amount)}</td>
+    <td data-label="當時餘額" class="num">${fmt(x.before)}</td>
+    <td data-label="結算餘額" class="num">${fmt(x.after)}</td>
+    <td data-label="地址／備註">${esc(x.address || '')}${x.address && x.note ? '<div class="small">' + esc(x.note) + '</div>' : esc(x.address ? '' : (x.note || '—'))}</td></tr>`).join('')
+    : '<tr><td colspan="7"><div class="empty">還沒有點數紀錄</div></td></tr>';
+}
+$('ledgerFilter').addEventListener('change', () => { ledgerFilter = $('ledgerFilter').value; renderWallet(); });
+function pointsDialog(id, mode) {
+  const d = DRIVERS.find(x => x.id === id); if (!d) return;
+  const add = mode === 'topup';
+  modal(`<h3 id="modalTitle">${add ? '幫 ' + esc(d.name) + ' 儲值' : '扣 ' + esc(d.name) + ' 的點數'}</h3>
+    <p class="sub">目前 ${fmt(d.balance || 0)} 點</p>
+    <form class="form" id="ptForm" novalidate>
+      ${add ? `<div class="chips">${[300, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-quick="${v}">+${v}</button>`).join('')}</div>` : ''}
+      <div class="field"><label for="pt-amt">${add ? '儲值點數' : '扣除點數'}</label><input id="pt-amt" type="number" inputmode="numeric" min="1" step="1"></div>
+      <div class="field"><label for="pt-note">備註</label><input id="pt-note" placeholder="${add ? '例如 現金儲值、轉帳末五碼 12345' : '例如 違規扣點、修正錯誤'}" autocomplete="off"></div>
+      <p class="err" id="ptErr" role="alert"></p>
+      <div class="mrow"><button class="sbtn" type="button" data-close>取消</button><button class="btn ${add ? 'blue' : 'red'}" type="submit">${add ? '確認儲值' : '確認扣點'}</button></div>
+    </form>`);
+  $('modalCard').querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { $('pt-amt').value = b.dataset.quick; });
+  $('ptForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const v = parseInt($('pt-amt').value, 10), err = $('ptErr');
+    if (!(v > 0)) return err.textContent = '請輸入大於 0 的整數';
+    const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
+    try {
+      const res = await db.adjustBalance(id, add ? v : -v, { type: add ? 'topup' : 'deduct', note: $('pt-note').value.trim() || (add ? '管理員儲值' : '管理員扣點'), by: ADMIN.id }, add ? {} : { noNegative: true });
+      closeModal(); toast(`${d.name}：${add ? '+' : '-'}${v} 點，目前 ${fmt(res.after)} 點`);
+    } catch (x) { btn.disabled = false; console.error(x); if (x.code === 'insufficient') return err.textContent = `只剩 ${fmt(x.balance)} 點，不能扣到負數`; err.textContent = (x.code === 'permission-denied' ? '雲端規則還沒更新（見上方說明）' : '失敗：' + (x.code || x.message)); if (x.code === 'permission-denied') $('rulesBanner').hidden = false; }
+  });
+}
+
 async function cleanJunk() {
   const list = JUNK.slice();
   if (!list.length) return;
@@ -495,6 +582,9 @@ document.addEventListener('click', e => {
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
   const rt = t.closest('[data-route]'); if (rt) return routeDialog(rt.dataset.route);
   if (t.closest('#fitMapBtn')) return fitDriverMap();
+  const tu = t.closest('[data-topup]'); if (tu) return pointsDialog(tu.dataset.topup, 'topup');
+  const dp = t.closest('[data-deductpt]'); if (dp) return pointsDialog(dp.dataset.deductpt, 'deduct');
+  const lo = t.closest('[data-ledgerof]'); if (lo) { ledgerFilter = lo.dataset.ledgerof; renderWallet(); $('ledgerFilter').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   if (t.closest('#addDriverBtn')) return addDriverDialog();
   if (t.closest('#junkBtn')) return cleanJunk();
   if (t.closest('#pwBtn') || t.closest('#bannerPwBtn')) return adminPwDialog();

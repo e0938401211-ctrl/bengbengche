@@ -57,7 +57,8 @@ let RIDES = [];         // 所有行程（即時）
 let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
 const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
-let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null;
+let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null, unsubL = null;
+let LEDGER = [], ACCEPTING = false;
 let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
 let SYNC_ERR_SHOWN = false;
 
@@ -279,11 +280,34 @@ function startMeter() {
 const A = {
   online() { ONLINE = true; S.status = 'searching'; FOLLOW = true; startLocate(); presence(); render(); },
   offline() { ONLINE = false; S.status = 'offline'; if (!GEO.rec) stopLocate(); presence(); render(); },
-  accept() {
-    if (!CUR) return;
-    stopCountdown();
+  async accept() {
+    if (!CUR || ACCEPTING) return;
+    const r = CUR, fee = Math.max(0, Number(r.commission) || 0);
+    ACCEPTING = true; stopCountdown();
+    const btn = document.querySelector('[data-a=accept]'); if (btn) { btn.disabled = true; btn.textContent = fee ? '扣點中…' : '接單中…'; }
+    try {
+      if (fee) {
+        const res = await db.adjustBalance(ME.phone, -fee,
+          { type: 'commission', rideId: r.id, address: (r.fromArea ? r.fromArea + ' ' : '') + r.from, note: '接單回金' },
+          { noNegative: true, rideId: r.id, flag: 'commissionLedger' });
+        if (!res.skipped) toast(`已扣回金 ${fee} 點，剩餘 ${res.after} 點`);
+      }
+    } catch (e) {
+      ACCEPTING = false;
+      if (e.code === 'insufficient') { toast(`點數不足：這張單需要 ${fee} 點，你只剩 ${e.balance} 點，請聯絡管理員儲值`); A.decline(); return; }
+      if (e.code === 'permission-denied') {
+        // 雲端規則還沒加入點數資料表：先讓司機接單，不影響營運，並在行程上註記未扣點
+        toast('這張單暫時無法扣回金（雲端規則未更新），已先接單，請通知管理員');
+        db.set('rides', r.id, { commissionError: 'permission-denied' }).catch(() => {});
+      } else {
+        console.error(e); toast('接單失敗：' + (e.code || e.message) + '，請再按一次');
+        startRequest(); render(); return;
+      }
+    }
+    ACCEPTING = false;
+    if (!CUR || CUR.id !== r.id) return;   // 扣點時行程資料會更新，用編號比對
     S.status = 'pickup'; S.unread = 0; CHAT = [];
-    db.set('rides', CUR.id, { status: 'pickup', acceptedAt: Date.now() }).then(() => presence()).catch(fail);
+    db.set('rides', r.id, { status: 'pickup', acceptedAt: Date.now() }).then(() => presence()).catch(fail);
     render();
   },
   decline() {
@@ -315,6 +339,7 @@ const A = {
     render();
   },
   detail(id) { openTrip(id); },
+  points() { S.tab = 'points'; render(); },
   next() { CUR = null; S.status = ONLINE ? 'searching' : 'offline'; presence(); onRides(RIDES); },
   chat() { openChat(); },
 
@@ -431,6 +456,31 @@ function openTrip(id) {
   BBC.drawRoute($('tdMap'), r.track);
 }
 
+// ---------- 點數（儲值與回金） ----------
+const balance = () => (ME && ME.balance) || 0;
+function pointsLine() {
+  const b = balance(), need = BBC.DEFAULT_COMMISSION;
+  return `<div class="row" style="padding-top:2px"><span class="sub">點數餘額 <b style="color:${b < need ? '#B3261E' : 'var(--ink)'}">${fmt(b)} 點</b>${b < need ? '（偏低，接單可能不足）' : ''}</span><button class="outline" data-a="points" style="height:34px;font-size:13px">點數紀錄</button></div>`;
+}
+function pointsHTML() {
+  const list = LEDGER.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 300);
+  const md = t => { const d = new Date(t); return (d.getMonth() + 1) + '/' + d.getDate() + '<br>' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const th = 'padding:8px 6px;border:1px solid var(--line);font-size:13px;font-weight:700;text-align:left;background:var(--white);position:sticky;top:0';
+  const td = 'padding:10px 6px;border:1px solid var(--line);font-size:14px;vertical-align:middle;font-variant-numeric:tabular-nums';
+  return `<div><p class="sub">目前餘額</p><div class="fare">${fmt(balance())} <span style="font-size:20px">點</span></div><p class="sub" style="font-size:12px">1 點 = 1 元 · 接單時扣回金，行程被管理員取消會自動退還</p></div>
+    <div class="panel" style="padding:0;overflow:hidden">
+      ${list.length ? `<table style="width:100%;border-collapse:collapse;table-layout:fixed">
+        <thead><tr><th style="${th};width:19%">日期</th><th style="${th};width:17%">入扣帳</th><th style="${th};width:16%">當時餘額</th><th style="${th};width:16%">結算餘額</th><th style="${th}">地址</th></tr></thead>
+        <tbody>${list.map(x => `<tr>
+          <td style="${td}">${md(x.createdAt)}</td>
+          <td style="${td}"><b style="color:${x.amount >= 0 ? '#1F7A34' : '#B3261E'};font-size:16px">${x.amount >= 0 ? '+' : ''}${fmt(x.amount)}</b><div style="font-size:11px;color:var(--grey)">${esc(BBC.LEDGER_TEXT[x.type] || x.type)}</div></td>
+          <td style="${td}">${fmt(x.before)}</td>
+          <td style="${td}">${fmt(x.after)}</td>
+          <td style="${td};font-size:13px;overflow-wrap:anywhere">${esc(x.address || x.note || '—')}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="sub" style="padding:16px">還沒有點數紀錄。管理員幫你儲值後就會出現在這裡。</p>'}
+    </div>`;
+}
+
 // ---------- 畫面 ----------
 function badge() { return S.unread ? `<span class="badge">${S.unread}</span>` : ''; }
 
@@ -440,7 +490,8 @@ function sheetHTML() {
     case 'offline': return `<div class="offline-wrap"><button class="online" data-a="online">上線</button>
       <div class="card center">${LOGO}<p class="h2">${ME ? esc(ME.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收管理平台的派單</p></div></div>`;
     case 'searching': return `<div class="card searching"><div class="track"><div class="fill"></div></div>
-      <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div></div>`;
+      <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div>
+      ${pointsLine()}</div>`;
     case 'request': return `<div class="req"><div class="row"><div class="chip">管理平台派單 · ${esc(r.id)}</div><div class="dim" id="cdText">剩 ${S.left} 秒</div></div>
       <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
       ${r.estFare == null
@@ -448,6 +499,7 @@ function sheetHTML() {
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 下車地點依乘客指示</div>`
         : `<div style="display:flex;align-items:baseline;gap:10px"><div class="fare">NT$${fmt(r.estFare)}</div><div class="dim">預估車資（跳表計費）</div></div>
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 約 ${esc(r.km)} 公里 / ${esc(r.mins)} 分鐘</div>`}
+      ${r.commission ? `<div class="dim" style="font-size:14px">接單扣回金 <b style="color:var(--yellow)">${fmt(r.commission)} 點</b> · 目前餘額 ${fmt(balance())} 點${balance() < r.commission ? '（不足，請先儲值）' : ''}</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:10px">
         <div class="stop"><div class="dot" style="background:#fff;border-radius:50%"></div><div>${esc(r.fromArea)} ${esc(r.from)}</div></div>
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
@@ -537,6 +589,8 @@ function render() {
   $('route').hidden = !(S.status === 'pickup' || S.status === 'trip');
   $('home').hidden = S.tab !== 'home';
   $('earn').hidden = S.tab !== 'earn';
+  $('points').hidden = S.tab !== 'points';
+  $('tab-points').setAttribute('aria-selected', S.tab === 'points');
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
@@ -544,7 +598,8 @@ function render() {
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track);
-  } else if (ME) $('earn').innerHTML = earnHTML();
+  } else if (ME && S.tab === 'earn') $('earn').innerHTML = earnHTML();
+  else if (ME && S.tab === 'points') $('points').innerHTML = pointsHTML();
 }
 
 // ---------- 登入 / 註冊 ----------
@@ -558,7 +613,7 @@ function seg(mode) {
 }
 function showAuth(msg) {
   stopCountdown(); stopMeter(); clearInterval(beatT); GEO.rec = false; stopLocate();
-  if (unsubR) unsubR(); if (unsubD) unsubD(); unsubR = unsubD = null;
+  if (unsubR) unsubR(); if (unsubD) unsubD(); if (unsubL) unsubL(); unsubR = unsubD = unsubL = null; LEDGER = [];
   ME = null; CUR = null; ONLINE = false; S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };
   $('profile').hidden = true; $('auth').hidden = false;
   seg('login');
@@ -580,6 +635,7 @@ function enter(d) {
     ME = withPhone(me);
   });
   unsubR = db.watch('rides', onRides);
+  unsubL = db.watch('ledger', list => { LEDGER = list; if (S.tab === 'points' || S.status === 'searching') render(); }, ['driverPhone', ME.phone]);
   initMap(); if (ONLINE) startLocate();
   presence(); startHeartbeat(); retryPending(); render();
 }
@@ -696,6 +752,7 @@ document.addEventListener('click', e => {
   if (e.target.closest('#myLocBtn')) return recenter();
   if (e.target.closest('#tab-home')) { S.tab = 'home'; render(); if (LM) setTimeout(() => LM.invalidateSize(), 50); }
   if (e.target.closest('#tab-earn')) { S.tab = 'earn'; render(); }
+  if (e.target.closest('#tab-points')) { S.tab = 'points'; render(); }
   if (e.target.closest('#seg-reg')) seg('reg');
   if (e.target.closest('#seg-login')) seg('login');
   if (e.target.closest('#profileBtn') && ME) {
