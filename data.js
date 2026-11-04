@@ -318,11 +318,12 @@
     const busy = new Set((rides || []).filter(x => x.id !== r.id && ['assigned', 'pickup', 'trip'].includes(x.status)).map(x => x.driverPhone));
     const rate = r.commissionRate != null ? Number(r.commissionRate) : null;
     const need = rate != null ? Math.floor((r.estFare || RATE.min) * rate / 100) : (r.commission || 0);
-    const lim = r.rangeMin || limitMin || 15;
+    const lim = r.rangeMin || (limitMin && limitMin.min) || limitMin || 15;
+    const limKm = r.rangeKm != null ? r.rangeKm : (limitMin && limitMin.km) || 0;   // 0 = 不限公里
     const list = (drivers || []).filter(d => isRealDriver(d) && driverState(d) === 'online' && !excl.has(d.id) && !busy.has(d.id)
       && (d.balance || 0) >= need && d.lat != null && Date.now() - (d.locAt || 0) < 5 * 60000)
       .map(d => ({ d, km: distKm([d.lat, d.lng], p) }))
-      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60)) <= lim)
+      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60)) <= lim && (!limKm || x.km * 1.35 <= limKm))
       .sort((a, b) => a.km - b.km);
     return list[0] ? list[0].d : null;
   }
@@ -553,7 +554,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.03-28',
+    VERSION: '2026.11.04-01',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, ACCEPT_SECS: 30, ONLINE_STALE_MS,
@@ -561,6 +562,7 @@
     DEFAULT_RATE: 10,
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機
     // 直線距離 → 大約開車分鐘：實際道路約是直線的 1.35 倍，市區平均時速約 30 公里（約每公里 2.7 分鐘）
+    roadKm: km => km == null ? null : Math.round(km * 1.35 * 10) / 10,   // 直線距離 → 大約道路公里數
     etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60)),   // 每 100 元車資回 10 點
     // 回金 = 車資 × 每百元回金 ÷ 100，小數捨去（例：車資 155、每百元 10 點 → 15 點）
     commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),

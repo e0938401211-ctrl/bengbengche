@@ -7,7 +7,7 @@ const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'assigned', 'pickup', 'trip'];
 
 let RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null;
-let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN };
+let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN, dispatchKm: 0 };
 let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
 let unsub = [];
@@ -69,7 +69,7 @@ function enter(a) {
   }));
   setTimeout(() => { loadRoads($('d-from-area').value); loadRoads($('d-to-area').value); }, 800);   // 先在背景載好預設區的道路
   unsub.push(db.watch('ledger', l => { LEDGER = l; $('rulesBanner').hidden = true; renderWallet(); }));
-  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE, dispatchMin: m.dispatchMin > 0 ? m.dispatchMin : BBC.DEFAULT_DISPATCH_MIN }); applyFeeDefault(); renderWallet(); updateEstimate(); renderRides(); }));
+  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE, dispatchMin: m.dispatchMin > 0 ? m.dispatchMin : BBC.DEFAULT_DISPATCH_MIN, dispatchKm: m.dispatchKm > 0 ? m.dispatchKm : 0 }); applyFeeDefault(); renderWallet(); updateEstimate(); renderRides(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
   renderAll();
 }
@@ -91,11 +91,17 @@ const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
 // 派單範圍：司機開到上車點的大約分鐘數要在設定內（預設 15 分鐘）；沒有 GPS 位置的司機無法判斷，不派
 const limitMin = () => SETTINGS.dispatchMin || BBC.DEFAULT_DISPATCH_MIN;
 const driverEta = (d, p) => { const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.etaMin(km); };
-const inRange = (d, p) => { const m = driverEta(d, p); return m != null && m <= limitMin(); };
+const limitKm = () => SETTINGS.dispatchKm > 0 ? SETTINGS.dispatchKm : 0;   // 0 = 不限公里
+const rangeLabel = () => limitMin() + ' 分鐘' + (limitKm() ? '、' + limitKm() + ' 公里' : '') + '車程內';
+const driverRoadKm = (d, p) => { const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.roadKm(km); };
+const inRange = (d, p) => !rangeText(d, p) && driverEta(d, p) != null;
 function rangeText(d, p) {
   const m = driverEta(d, p);
   if (m == null) return freshLoc(d) ? '' : '未定位，無法判斷距離';
-  return m <= limitMin() ? '' : '約 ' + m + ' 分鐘，超過 ' + limitMin() + ' 分鐘';
+  if (m > limitMin()) return '約 ' + m + ' 分鐘，超過 ' + limitMin() + ' 分鐘';
+  const rk = driverRoadKm(d, p);
+  if (limitKm() && rk > limitKm()) return '約 ' + rk + ' 公里，超過 ' + limitKm() + ' 公里';
+  return '';
 }
 function nearestDriver(fromText, fromArea, exclude, feeArg, coords) {
   const p = coords || BBC.locate(fromText, fromArea).c;
@@ -108,9 +114,9 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needA
   const list = available(exclude);
   const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
-  let html = withAuto ? `<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（${limitMin()} 分鐘車程內）</option>` : '<option value="">選擇司機…</option>';
+  let html = withAuto ? `<option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（${rangeLabel()}）</option>` : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點 ' + km.toFixed(1) + ' km，約 ' + BBC.etaMin(km) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超過 ' + limitMin() + ' 分鐘，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
+    ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點約 ' + BBC.roadKm(km) + ' 公里車程、' + BBC.etaMin(km) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超出派單範圍，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -299,11 +305,11 @@ $('dispatchForm').addEventListener('submit', async e => {
   let pick = $('d-driver').value, drv = null;
   if (pick === '__auto') {
     drv = nearestDriver(from, $('d-from-area').value, [], curNeed(), pickCoord('from'));
-    if (!drv) return err.textContent = `${limitMin()} 分鐘車程內沒有點數足夠的線上空車司機，可以改選「稍後指派」，等司機靠近再派`;
+    if (!drv) return err.textContent = `${rangeLabel()}沒有點數足夠的線上空車司機，可以改選「稍後指派」，等司機靠近再派`;
   } else if (pick) {
     drv = DRIVERS.find(d => d.id === pick);
     const far = drv && rangeText(drv, pickCoord('from') || BBC.locate(from, $('d-from-area').value).c);
-    if (far) return err.textContent = `${drv.name} ${far}，不能派這張單。請選 ${limitMin()} 分鐘內的司機，或先放到待派單`;
+    if (far) return err.textContent = `${drv.name} ${far}，不能派這張單。請選 ${rangeLabel()}的司機，或先放到待派單`;
   }
   const now = Date.now();
   const ride = Object.assign({
@@ -311,7 +317,7 @@ $('dispatchForm').addEventListener('submit', async e => {
     note: $('d-note').value.trim(), from, to, declinedBy: [], createdAt: now, commissionRate: feeNow(),
     fromLat: PICK.from ? PICK.from.lat : null, fromLng: PICK.from ? PICK.from.lng : null,
     toLat: to && PICK.to ? PICK.to.lat : null, toLng: to && PICK.to ? PICK.to.lng : null,
-    rangeMin: limitMin(),
+    rangeMin: limitMin(), rangeKm: limitKm(),
     status: drv ? 'assigned' : 'pending', driverPhone: drv ? drv.id : '', driverName: drv ? (drv.name || drv.id) : '', plate: drv ? (drv.plate || '') : '',
     assignedAt: drv ? now : 0
   }, est);
@@ -331,7 +337,7 @@ $('dispatchForm').addEventListener('submit', async e => {
 async function assign(rideId, phone) {
   const r = RIDES.find(x => x.id === rideId); if (!r) return;
   let d = phone === '__auto' ? nearestDriver(r.from, r.fromArea, r.declinedBy, rideNeed(r), BBC.fromCoord(r)) : DRIVERS.find(x => x.id === phone);
-  if (!d) return toast(phone === '__auto' ? limitMin() + ' 分鐘車程內沒有可派的線上空車司機' : '請先選擇司機');
+  if (!d) return toast(phone === '__auto' ? rangeLabel() + '沒有可派的線上空車司機' : '請先選擇司機');
   { const far = rangeText(d, BBC.fromCoord(r) || BBC.locate(r.from, r.fromArea).c); if (far) return toast(`${d.name} ${far}，不能派這張單`); }
   if (state(d) !== 'online') return toast(d.name + ' 目前不是線上空車，無法派單');
   if (!enoughPoints(d, rideNeed(r))) return toast(`${d.name} 只剩 ${fmt(d.balance || 0)} 點，不夠這張單預估的回金 ${rideNeed(r)} 點，請先儲值`);
@@ -403,7 +409,7 @@ function renderRides() {
       : r.estFare == null ? `<b>跳表計費</b><span class="t">未指定下車地點</span>` : `<b>NT$${fmt(r.estFare)}</b><span class="t">預估 · ${esc(r.km)} km / ${esc(r.mins)} 分</span>`;
     let act = '';
     if (r.status === 'pending') {
-      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea, BBC.fromCoord(r), rideNeed(r)).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（' + limitMin() + ' 分鐘車程內）</option>')}</select>
+      act = `<select data-pick="${esc(r.id)}" aria-label="選擇要派的司機">${driverOptions(keep[r.id], r.declinedBy, false, r.from, r.fromArea, BBC.fromCoord(r), rideNeed(r)).replace('<option value="">選擇司機…</option>', '<option value="">選擇司機…</option><option value="__auto">自動派給最近的司機（' + rangeLabel() + '）</option>')}</select>
         <button class="sbtn primary" type="button" data-assign="${esc(r.id)}">派單</button>
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕${(r.declines || []).length ? '：' + r.declines.map(x => esc(x.name) + '（' + esc(x.reason) + '）').join('、') : ''}</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
@@ -496,7 +502,7 @@ setInterval(() => {
     const k = r.id + ':' + r.assignedAt; if (STALE_DONE[k]) return; STALE_DONE[k] = 1;
     const d = DRIVERS.find(x => x.id === r.driverPhone) || { phone: r.driverPhone, name: r.driverName };
     const old = Date.now() - r.assignedAt > 10 * 60000;   // 很久以前的舊單只退回待派單，不自動改派
-    BBC.declineAndReassign(r, { phone: d.id || d.phone, name: d.name }, '逾時未回應', old ? [] : DRIVERS, RIDES, limitMin()).catch(fail);
+    BBC.declineAndReassign(r, { phone: d.id || d.phone, name: d.name }, '逾時未回應', old ? [] : DRIVERS, RIDES, { min: limitMin(), km: limitKm() }).catch(fail);
   });
   if (!$('rideList')) return;
   document.querySelectorAll('[data-left]').forEach(el => { const s = Math.max(0, BBC.ACCEPT_SECS - Math.floor((Date.now() - +el.dataset.left) / 1000)); el.textContent = s ? `剩 ${s} 秒` : '逾時，改派中…'; });
@@ -684,15 +690,17 @@ function applyFeeDefault() {
   if (!feeTouched) $('d-fee').value = SETTINGS.commissionRate;
   if (document.activeElement !== $('s-fee')) $('s-fee').value = SETTINGS.commissionRate;
   if ($('s-range') && document.activeElement !== $('s-range')) $('s-range').value = limitMin();
+  if ($('s-km') && document.activeElement !== $('s-km')) $('s-km').value = limitKm() || '';
   $('feeHint').textContent = '預設每 100 元回 ' + SETTINGS.commissionRate + ' 點，行程結束才扣';
 }
 $('d-fee').addEventListener('input', () => { feeTouched = true; updateEstimate(); });
 $('feeForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const v = parseInt($('s-fee').value, 10), m = parseInt($('s-range').value, 10);
+  const v = parseInt($('s-fee').value, 10), m = parseInt($('s-range').value, 10), kt = $('s-km').value.trim(), k = kt ? parseFloat(kt) : 0;
+  if (!(k >= 0 && k <= 100)) return $('feeSaved').textContent = '公里範圍請輸入 0–100（留空 = 不限）';
   if (!(v >= 0)) return $('feeSaved').textContent = '回金請輸入 0 以上的整數';
   if (!(m >= 1 && m <= 120)) return $('feeSaved').textContent = '派單範圍請輸入 1–120 分鐘';
-  try { await db.set('settings', 'main', { commissionRate: v, dispatchMin: m, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = `已儲存：每 100 元車資回 ${v} 點；只派給 ${m} 分鐘車程內的司機`; } catch (x) { fail(x); }
+  try { await db.set('settings', 'main', { commissionRate: v, dispatchMin: m, dispatchKm: k, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = `已儲存：每 100 元車資回 ${v} 點；只派給 ${m} 分鐘${k ? '、' + k + ' 公里' : ''}車程內的司機`; } catch (x) { fail(x); }
 });
 function renderWallet() {
   if (!ADMIN || !$('walletRows')) return;
