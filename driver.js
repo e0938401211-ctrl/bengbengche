@@ -95,6 +95,21 @@ function onRides(list, meta) {
     .sort((a, b) => (b.assignedAt || b.createdAt || 0) - (a.assignedAt || a.createdAt || 0));
   const r = mine[0] || null;
 
+  // 搶單：正在看的搶單，如果被別人搶走、時間到或收回就收起來
+  if (S.grab && CUR) {
+    const cur = list.find(x => x.id === CUR.id);
+    if (r && r.id === CUR.id) S.grab = false;                       // 我搶到了，下面照一般流程
+    else if (r || !cur || !BBC.offerOpen(cur) || !(cur.offerTo || []).includes(ME.phone) || (cur.declinedBy || []).includes(ME.phone)) {
+      dropOffer(r ? '' : cur && cur.driverPhone && cur.driverPhone !== ME.phone ? `慢了一步，${cur.driverName} 搶到了` : cur && cur.status === 'cancelled' ? '管理員已取消這張單' : '');
+    } else { CUR = cur; render(); return; }
+  }
+  // 沒有派給我的單時，看看有沒有可以搶的單
+  if (!r && !CUR && ONLINE && S.status === 'searching') {
+    const offer = list.filter(x => BBC.offerOpen(x) && (x.offerTo || []).includes(ME.phone) && !(x.declinedBy || []).includes(ME.phone))
+      .sort((a, b) => b.offerAt - a.offerAt)[0];
+    if (offer) { CUR = offer; S.grab = true; startRequest(); render(); return; }
+  }
+
   if (CUR && (!r || r.id !== CUR.id) && S.status !== 'done') {
     const old = list.find(x => x.id === CUR.id);
     if (!old) { verifyCurrent(CUR.id); render(); return; }   // 清單裡暫時沒有，向雲端確認後再決定
@@ -127,15 +142,24 @@ function verifyCurrent(id) {
 
 function startRequest() {
   ONLINE = true;
-  S.status = 'request'; S.left = SECS; S.declining = false;
+  const total = S.grab ? (CUR.offerSecs || BBC.GRAB_SECS) : SECS;
+  S.status = 'request'; S.declining = false;
+  S.left = S.grab ? Math.max(1, Math.ceil(total - (Date.now() - CUR.offerAt) / 1000)) : SECS; S.total = total;
   stopCountdown();
   countT = setInterval(() => {
     S.left -= 1;
-    if (S.left <= 0) { A.decline('逾時未接'); toast('超過時間未接單，已退回給管理平台'); }
+    if (S.left <= 0) { if (S.grab) dropOffer('搶單時間到'); else { A.decline('逾時未接'); toast('超過時間未接單，已退回給管理平台'); } }
     else updateCountdown();
   }, 1000);
   try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
-  speak('新的派單，' + (CUR ? CUR.from : ''));
+  speak((S.grab ? '有單可以搶，' : '新的派單，') + (CUR ? CUR.from : ''));
+}
+// 收起搶單（被搶走、時間到、不搶）
+function dropOffer(msg) {
+  stopCountdown(); CUR = null; S.grab = false; S.declining = false;
+  S.status = ONLINE ? 'searching' : 'offline';
+  if (msg) toast(msg);
+  render();
 }
 
 // ---------- GPS 實際路線 ----------
@@ -373,6 +397,24 @@ const A = {
     db.set('rides', r.id, { status: 'pickup', acceptedAt: Date.now() }).then(() => presence()).catch(fail);
     render();
   },
+  // 搶單：選「幾分鐘到」，先搶到的人接
+  async grab(mins) {
+    if (!CUR || !S.grab || ACCEPTING) return;
+    const r = CUR, need = estNeed(r);
+    if (need && balance() < need) return toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
+    ACCEPTING = true;
+    let won = null;
+    try { won = await BBC.grabRide(r.id, ME, mins); } catch (e) { fail(e); }
+    ACCEPTING = false;
+    if (!won) return dropOffer('慢了一步，這張單已經被搶走了');
+    if (!CUR || CUR.id !== r.id) return;
+    stopCountdown(); S.grab = false;
+    CUR = Object.assign({}, r, won); S.status = 'pickup';
+    toast(`搶到了！請在 ${mins} 分鐘內到上車點`); speak('搶單成功，' + mins + '分鐘內到');
+    presence(); render();
+  },
+  grab5() { A.grab(5); }, grab10() { A.grab(10); }, grab15() { A.grab(15); },
+  pass() { if (!CUR || !S.grab) return; const id = CUR.id; BBC.passRide(id, ME).catch(() => {}); dropOffer('已略過這張單'); },
   // 按「拒絕」先選原因（倒數照跑），選了才真的退回
   askDecline() { if (!CUR) return; S.declining = true; render(); },
   cancelDecline() { S.declining = false; render(); },
@@ -589,8 +631,8 @@ function sheetHTML() {
       <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div>
       <button class="outline" data-a="chat" style="position:relative;align-self:flex-start">聯絡管理平台${badge()}</button>
       ${pointsLine()}</div>`;
-    case 'request': return `<div class="req"><div class="row"><div class="chip">管理平台派單 · ${esc(r.id)}</div><div class="dim" id="cdText">剩 ${S.left} 秒</div></div>
-      <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / SECS * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
+    case 'request': return `<div class="req"><div class="row"><div class="chip">${S.grab ? `搶單 · ${(r.offerTo || []).length} 人同時收到` : '管理平台派單 · ' + esc(r.id)}</div><div class="dim" id="cdText" style="white-space:nowrap">剩 ${S.left} 秒</div></div>
+      <div class="track" style="background:#2D3833"><div class="fill" id="cdBar" style="width:${S.left / (S.total || SECS) * 100}%;background:var(--yellow);transition:width 1s linear"></div></div>
       ${r.estFare == null
         ? `<div style="display:flex;align-items:baseline;gap:10px"><div class="fare">跳表計費</div><div class="dim">起跳 NT$${BBC.RATE.base}</div></div>
       <div class="dim" style="font-size:14px">${esc(r.riderName || '乘客')}${r.riderPhone ? ' · ' + esc(r.riderPhone) : ''} · 下車地點依乘客指示</div>`
@@ -602,12 +644,16 @@ function sheetHTML() {
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
-      ${S.declining
+      ${S.grab
+        ? `<div class="whyno"><p style="font-weight:700">你幾分鐘可以到上車點？按下去就搶，先搶到的人接</p>
+          <div class="grabgrid"><button data-a="grab5">5 分鐘</button><button data-a="grab10">10 分鐘</button><button data-a="grab15">15 分鐘</button></div>
+          <button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
+        : S.declining
         ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
           <div class="whygrid"><button data-a="declineBusy">正在忙</button><button data-a="declinePlain">拒絕</button></div></div>`
         : `<div style="display:flex;gap:10px"><button class="nobtn" data-a="askDecline">${ICON_X}<span>拒絕</span></button>
       <button class="btn" style="background:var(--blue)" data-a="accept">接受</button></div>`}</div>`;
-    case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
+    case 'pickup': return `<div class="card"><div class="kicker">前往上車地點 · ${esc(r.id)}${r.promisedMin ? ` · 你承諾 ${r.promisedMin} 分鐘內到（${BBC.hhmm((r.acceptedAt || Date.now()) + r.promisedMin * 60000)} 前）` : ''}</div><p class="h2">${esc(r.fromArea)} ${esc(r.from)}</p>
       <p id="etaLine2" style="color:var(--blue);font-weight:700">${etaText()}</p>
       ${r.note ? `<p class="sub">備註：${esc(r.note)}</p>` : ''}
       <div style="display:flex;align-items:center;gap:12px"><div class="avatar">${esc((r.riderName || '乘')[0])}</div>
@@ -644,7 +690,7 @@ function sheetHTML() {
 function updateCountdown() {
   const t = $('cdText'), b = $('cdBar');
   if (t) t.textContent = '剩 ' + S.left + ' 秒';
-  if (b) b.style.width = (S.left / SECS * 100) + '%';
+  if (b) b.style.width = (S.left / (S.total || SECS) * 100) + '%';
 }
 
 function myDone() {

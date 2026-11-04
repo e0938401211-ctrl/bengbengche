@@ -312,6 +312,31 @@
   // 有名字和手機的才是真正的司機帳號
   const isRealDriver = d => !!(d && d.name && (d.phone || /^09\d{8}$/.test(d.id)));
   // 拒絕／逾時後自動挑下一位：線上空車、沒在接別張單、沒拒絕過、點數夠、GPS 5 分鐘內有更新、開車到上車點在派單範圍內，取最近的
+  // 搶單：派單時同時通知範圍內所有符合條件的司機，司機選「幾分鐘到」搶，先搶到的人接
+  const GRAB_SECS = 30, GRAB_KM = 5;
+  function grabCandidates(r, drivers, rides, km) {
+    const p = fromCoord(r) || locate(r.from, r.fromArea).c;
+    const excl = new Set(r.declinedBy || []);
+    const busy = new Set((rides || []).filter(x => x.id !== r.id && ['assigned', 'pickup', 'trip'].includes(x.status)).map(x => x.driverPhone));
+    const rate = r.commissionRate != null ? Number(r.commissionRate) : null;
+    const need = rate != null ? Math.floor((r.estFare || RATE.min) * rate / 100) : (r.commission || 0);
+    return (drivers || []).filter(d => isRealDriver(d) && driverState(d) === 'online' && !excl.has(d.id) && !busy.has(d.id)
+      && (d.balance || 0) >= need && d.lat != null && Date.now() - (d.locAt || 0) < 5 * 60000)
+      .map(d => ({ d, km: distKm([d.lat, d.lng], p) }))
+      .filter(x => x.km * 1.35 <= (km || GRAB_KM))
+      .sort((a, b) => a.km - b.km).map(x => x.d);
+  }
+  const offerOpen = r => r && r.status === 'offering' && Date.now() - (r.offerAt || 0) < (r.offerSecs || GRAB_SECS) * 1000;
+  // 搶單：交易確認這張單還在搶，才寫成自己的
+  function grabRide(id, me, mins) {
+    return db.update('rides', id, cur => {
+      if (!offerOpen(cur) || !(cur.offerTo || []).includes(me.phone) || (cur.declinedBy || []).includes(me.phone)) return null;
+      return { status: 'pickup', driverPhone: me.phone, driverName: me.name || me.phone, plate: me.plate || '', assignedAt: Date.now(), acceptedAt: Date.now(), promisedMin: mins, grabbed: true };
+    });
+  }
+  function passRide(id, me) {
+    return db.update('rides', id, cur => cur && cur.status === 'offering' ? { declinedBy: (cur.declinedBy || []).concat(me.phone), declines: (cur.declines || []).concat({ phone: me.phone, name: me.name || me.phone, reason: '不搶', at: Date.now() }) } : null);
+  }
   function nextDriver(r, drivers, rides, limitMin) {
     const p = fromCoord(r) || locate(r.from, r.fromArea).c;
     const excl = new Set((r.declinedBy || []).concat(r.driverPhone ? [r.driverPhone] : []));
@@ -375,6 +400,8 @@
       async set(c, id, data) { if (!id) throw new Error('資料編號錯誤'); const o = read(c); o[id] = Object.assign({}, o[id] || {}, data); write(c, o); },
       async add(c, data) { const id = rideNo(); const o = read(c); o[id] = data; write(c, o); return id; },
       async remove(c, id) { const o = read(c); delete o[id]; write(c, o); },
+      // 讀出最新資料 → fn 決定要改什麼（回傳 null 代表不改）；搶單用，確保只有一個人搶到
+      async update(c, id, fn) { const o = read(c); const cur = o[id] ? Object.assign({ id }, o[id]) : null; const patch = fn(cur); if (!patch) return null; o[id] = Object.assign({}, o[id] || {}, patch); write(c, o); return patch; },
       async adjustBalance(phone, delta, entry, opts) {
         opts = opts || {};
         const D = read('drivers'), d = D[phone];
@@ -415,6 +442,10 @@
       async set(c, id, data) { await ref(c, id).set(enc(data), { merge: true }); },
       async add(c, data) { const id = rideNo(); await ref(c, id).set(enc(data)); return id; },
       async remove(c, id) { await ref(c, id).delete(); },
+      async update(c, id, fn) {
+        const r = ref(c, id);
+        return fs.runTransaction(async t => { const s = await t.get(r); const patch = fn(s.exists ? dec(s.id, s.data()) : null); if (!patch) return null; t.set(r, enc(patch), { merge: true }); return patch; });
+      },
       // 點數增減用交易處理：同時更新餘額與寫入明細；同一趟行程只扣（或退）一次；可要求餘額不得為負
       async adjustBalance(phone, delta, entry, opts) {
         opts = opts || {};
@@ -554,10 +585,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.04-01',
+    VERSION: '2026.11.04-02',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
-    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, ACCEPT_SECS: 30, ONLINE_STALE_MS,
+    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機
@@ -568,7 +599,7 @@
     commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),
     // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）
     rideRate: r => r && r.commissionRate != null ? Number(r.commissionRate) : null,
-    STATUS_TEXT: { pending: '待派單', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
+    STATUS_TEXT: { pending: '待派單', offering: '搶單中', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
     DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };
 })();
