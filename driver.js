@@ -623,7 +623,10 @@ function pointsHTML() {
 }
 
 // ---------- 畫面 ----------
-function badge() { return S.unread ? `<span class="badge">${S.unread}</span>` : ''; }
+function badge() { const u = ME && $('chat').hidden ? unreadAdmin() : 0; return u ? `<span class="badge">${u}</span>` : ''; }
+// 換到新的單時，開著的對話也換成新的單
+let LAST_THREAD = null;
+function syncThread() { const t = ME ? thread() : ''; if (t === LAST_THREAD) return; LAST_THREAD = t; if (!$('chat').hidden) openChat(); }
 
 function sheetHTML() {
   const r = CUR || {};
@@ -739,6 +742,7 @@ function render() {
   const r = CUR;
   $('mapLbl2').textContent = '高雄市';
   showStopPins();
+  syncThread();
   $('mapLbl1').textContent = r && S.status === 'pickup' ? r.from : r && S.status === 'trip' ? (r.to || '') : '高雄車站';
   $('pill').textContent = 'NT$ ' + fmt(todayStats().sum);
   $('route').hidden = !(S.status === 'pickup' || S.status === 'trip');
@@ -749,7 +753,7 @@ function render() {
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
-    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '') + (S.bid || '') + (S.grab && CUR ? ':' + (CUR.bids || []).length : '');
+    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '') + (ME && $('chat').hidden ? 'u' + unreadAdmin() : '') + (S.bid || '') + (S.grab && CUR ? ':' + (CUR.bids || []).length : '');
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.fromCoord(CUR) || BBC.locate(CUR.from || '', CUR.fromArea || '').c });
@@ -863,7 +867,9 @@ $('reg-fuel').addEventListener('change', () => { if ($('reg-fuel').value === '�
 // ---------- 和管理平台傳訊息（存在司機自己的資料裡：msgs，管理端也看得到） ----------
 let VOICE = false, MSG_SEEN = null;
 const QUICK = ['已到上車點，乘客還沒出現', '乘客聯絡不上', '路上塞車，會晚一點到', '乘客要更改下車地點', '收到'];
-const myMsgs = () => (ME && ME.msgs) || [];
+// 每張行程有自己的對話：有單時只顯示這張單的訊息，沒單時是一般對話
+const thread = () => CUR && ['request', 'pickup', 'trip', 'done'].includes(S.status) && !S.grab ? CUR.id : '';
+const myMsgs = () => ((ME && ME.msgs) || []).filter(m => (m.r || '') === thread());
 const unreadAdmin = () => myMsgs().filter(m => m.f === 'a' && m.at > ((ME && ME.readD) || 0)).length;
 function speak(text) {
   if (!VOICE) return;
@@ -877,12 +883,12 @@ function renderChat() {
   box.scrollTop = box.scrollHeight;
 }
 function markRead() { if (!ME) return; const now = Date.now(); ME.readD = now; db.set('drivers', ME.phone, { readD: now }).catch(() => {}); S.unread = 0; }
-function openChat() { $('chatName').textContent = '管理平台'; $('chat').hidden = false; markRead(); renderChat(); render(); }
+function openChat() { $('chatName').textContent = '管理平台'; $('chatSub').textContent = thread() ? '行程 ' + thread() + ' 專用對話（新的單會開新的對話）' : '一般對話（目前沒有行程）'; $('chat').hidden = false; markRead(); renderChat(); render(); }
 function closeChat() { $('chat').hidden = true; }
 // 司機資料更新時呼叫：有新的管理員訊息就提醒
 function onMsgs() {
-  const list = myMsgs(), last = list.length ? list[list.length - 1].at : 0;
-  if (MSG_SEEN != null) list.filter(m => m.f === 'a' && m.at > MSG_SEEN).forEach(m => { speak('管理平台說：' + m.t); if ($('chat').hidden) toast('管理平台：' + m.t); });
+  const all = (ME && ME.msgs) || [], last = all.length ? all[all.length - 1].at : 0;
+  if (MSG_SEEN != null) all.filter(m => m.f === 'a' && m.at > MSG_SEEN).forEach(m => { speak('管理平台說：' + m.t); if ($('chat').hidden) toast('管理平台：' + m.t); });
   MSG_SEEN = Math.max(MSG_SEEN || 0, last);
   if (!$('chat').hidden) { if (unreadAdmin()) markRead(); renderChat(); }
   const u = $('chat').hidden ? unreadAdmin() : 0;
@@ -890,8 +896,8 @@ function onMsgs() {
 }
 function sendMsg(text) {
   text = text.trim(); if (!text || !ME) return;
-  const m = { f: 'd', t: text.slice(0, 300), at: Date.now() };
-  ME.msgs = myMsgs().concat(m).slice(-80); MSG_SEEN = m.at;
+  const m = { f: 'd', t: text.slice(0, 300), at: Date.now(), r: thread() };
+  ME.msgs = ((ME && ME.msgs) || []).concat(m).slice(-80); MSG_SEEN = m.at;
   renderChat();
   db.set('drivers', ME.phone, { msgs: ME.msgs, msgAtD: m.at, readD: m.at }).catch(fail);
 }

@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'offering', 'assigned', 'pickup', 'trip'];
 
-let RIDES_ST = null, RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null;
+let RIDES_ST = null, RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null, MSG_RIDE = '';
 let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN, dispatchKm: 0 };
 let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
@@ -66,7 +66,7 @@ function enter(a) {
   unsub.push(db.watch('drivers', l => {
     JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver);
     // 司機傳來新訊息：跳通知
-    DRIVERS.forEach(d => { const at = d.msgAtD || 0, o = MSG_SEEN_A[d.id]; if (o != null && at > o && MSG_OPEN !== d.id) { const m = (d.msgs || []).filter(x => x.f === 'd').pop(); if (m) toast(`💬 ${d.name}：${m.t}`); } MSG_SEEN_A[d.id] = at; });
+    DRIVERS.forEach(d => { const at = d.msgAtD || 0, o = MSG_SEEN_A[d.id]; if (o != null && at > o && MSG_OPEN !== d.id) { const m = (d.msgs || []).filter(x => x.f === 'd').pop(); if (m) toast(`💬 ${d.name}${m.r ? '（行程 ' + m.r + '）' : ''}：${m.t}`); } MSG_SEEN_A[d.id] = at; });
     renderAll(); if (MSG_OPEN) renderMsgDialog();
   }));
   setTimeout(() => { loadRoads($('d-from-area').value); loadRoads($('d-to-area').value); }, 800);   // 先在背景載好預設區的道路
@@ -441,7 +441,7 @@ function renderRides() {
     } else if (r.status === 'pickup' || r.status === 'trip') {
       act = `<span class="t">${r.status === 'pickup' ? '司機前往上車點' + (r.promisedMin ? `（搶單：承諾 ${r.promisedMin} 分鐘內到，${BBC.hhmm((r.acceptedAt || 0) + r.promisedMin * 60000)} 前）` : '') : '開始跳表 ' + BBC.hhmm(r.startedAt)}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
         <button class="sbtn" type="button" data-route="${esc(r.id)}">即時位置與路線</button>
-        <button class="sbtn" type="button" data-msg="${esc(r.driverPhone)}">傳訊息給司機${(d => d && unreadOf(d) ? '（' + unreadOf(d) + '）' : '')(DRIVERS.find(x => x.id === r.driverPhone))}</button>
+        <button class="sbtn" type="button" data-msg="${esc(r.driverPhone)}" data-msgride="${esc(r.id)}">傳訊息給司機${(d => d && unreadOf(d, r.id) ? '（' + unreadOf(d, r.id) + '）' : '')(DRIVERS.find(x => x.id === r.driverPhone))}</button>
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'done') {
       act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(Math.round(r.finalMin || 0))} 分鐘 · ${r.distanceSource === 'gps' ? 'GPS 實際里程' : '估算里程'}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
@@ -535,7 +535,7 @@ setInterval(() => {
 
 // ---------- 對話框 ----------
 function modal(html) { $('modalCard').innerHTML = html; $('modal').hidden = false; const f = $('modalCard').querySelector('input,select,button'); if (f) f.focus(); }
-function closeModal() { MSG_OPEN = null; clearInterval(ROUTE_T); const m = $('mMap'); if (m && m._map) { try { m._map.remove(); } catch (e) {} m._map = null; m._st = null; } $('modal').hidden = true; $('modalCard').innerHTML = ''; $('modalCard').style.width = ''; }
+function closeModal() { MSG_OPEN = null; MSG_RIDE = ''; clearInterval(ROUTE_T); const m = $('mMap'); if (m && m._map) { try { m._map.remove(); } catch (e) {} m._map = null; m._st = null; } $('modal').hidden = true; $('modalCard').innerHTML = ''; $('modalCard').style.width = ''; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
 
 $('brands').innerHTML = ['Toyota 豐田', 'Lexus 凌志', 'Honda 本田', 'Nissan 日產', 'Mitsubishi 三菱', 'CMC 中華', 'Mazda 馬自達', 'Subaru 速霸陸', 'Suzuki 鈴木', 'Hyundai 現代', 'Kia 起亞', 'Ford 福特', 'Volkswagen 福斯', 'Škoda', 'Audi 奧迪', 'BMW', 'MINI', 'Mercedes-Benz 賓士', 'Volvo 富豪', 'Porsche 保時捷', 'Tesla 特斯拉', 'Luxgen 納智捷', 'Peugeot 寶獅', 'Citroën 雪鐵龍', 'MG', 'Land Rover', 'Jeep'].map(b => `<option value="${b}">`).join('');
@@ -785,12 +785,16 @@ function pointsDialog(id, mode) {
 }
 
 // ---------- 和司機傳訊息（存在司機資料的 msgs 欄位） ----------
-const unreadOf = d => (d.msgs || []).filter(m => m.f === 'd' && m.at > (d.readA || 0)).length;
+// 每張行程有自己的對話（訊息帶 r = 行程編號）；沒有行程時是「一般」對話
+const unreadOf = (d, rid) => (d.msgs || []).filter(m => m.f === 'd' && m.at > (d.readA || 0) && (rid === undefined || (m.r || '') === rid)).length;
+const activeRideOf = id => RIDES.find(r => r.driverPhone === id && ['assigned', 'pickup', 'trip'].includes(r.status));
 const ADMIN_QUICK = ['收到', '請盡快前往上車點', '乘客已在路邊等候', '乘客取消了，請回到線上', '請回電給管理平台'];
-function msgDialog(id) {
+function msgDialog(id, rideId) {
   const d = DRIVERS.find(x => x.id === id); if (!d) return;
-  MSG_OPEN = id;
-  modal(`<h3 id="modalTitle">和 ${esc(d.name)} 的訊息</h3><p class="sub">${esc(d.id)} · ${esc(d.plate || '')}</p>
+  if (rideId === undefined) { const a = activeRideOf(id); rideId = a ? a.id : ''; }   // 從司機列表開：有進行中的行程就開那張單的對話
+  MSG_OPEN = id; MSG_RIDE = rideId || '';
+  const r = MSG_RIDE && RIDES.find(x => x.id === MSG_RIDE);
+  modal(`<h3 id="modalTitle">和 ${esc(d.name)} 的訊息</h3><p class="sub">${esc(d.id)} · ${esc(d.plate || '')} · ${MSG_RIDE ? '行程 ' + esc(MSG_RIDE) + ' 專用對話' + (r ? '（' + esc(r.from) + '）' : '') : '一般對話（目前沒有行程）'}</p>
     <div class="amsgs" id="amsgs" aria-live="polite"></div>
     <div class="chips">${ADMIN_QUICK.map(q => `<button type="button" class="chip" data-aq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
     <form class="form" id="amForm" novalidate style="flex-direction:row;gap:8px">
@@ -799,20 +803,21 @@ function msgDialog(id) {
     </form>
     <div class="mrow"><button class="sbtn" type="button" data-close>關閉</button></div>`);
   $('modalCard').querySelectorAll('[data-aq]').forEach(b => b.onclick = () => sendToDriver(id, b.dataset.aq));
+  // 其他行程的對話不顯示在這裡
   $('amForm').addEventListener('submit', e => { e.preventDefault(); sendToDriver(id, $('am-in').value); $('am-in').value = ''; $('am-in').focus(); });
   renderMsgDialog(); $('am-in').focus();
 }
 function renderMsgDialog() {
   const d = DRIVERS.find(x => x.id === MSG_OPEN), box = $('amsgs'); if (!d || !box) return;
-  const list = d.msgs || [];
+  const list = (d.msgs || []).filter(m => (m.r || '') === MSG_RIDE);
   box.innerHTML = list.length ? list.map(m => `<div class="am ${m.f === 'a' ? 'me' : ''}"><div>${esc(m.t)}</div><span>${m.f === 'a' ? esc(m.by || '管理員') + ' · ' : ''}${BBC.hhmm(m.at)}</span></div>`).join('')
     : '<p class="sub" style="text-align:center">還沒有訊息</p>';
   box.scrollTop = box.scrollHeight;
-  if (unreadOf(d)) { d.readA = Date.now(); db.set('drivers', d.id, { readA: d.readA }).catch(() => {}); }
+  if (unreadOf(d, MSG_RIDE)) { d.readA = Date.now(); db.set('drivers', d.id, { readA: d.readA }).catch(() => {}); }
 }
 async function sendToDriver(id, text) {
   text = (text || '').trim(); const d = DRIVERS.find(x => x.id === id); if (!text || !d) return;
-  const m = { f: 'a', t: text.slice(0, 300), at: Date.now(), by: ADMIN.name || ADMIN.id };
+  const m = { f: 'a', t: text.slice(0, 300), at: Date.now(), by: ADMIN.name || ADMIN.id, r: MSG_RIDE || '' };
   d.msgs = (d.msgs || []).concat(m).slice(-80); d.readA = m.at; renderMsgDialog();
   try { await db.set('drivers', id, { msgs: d.msgs, msgAtA: m.at, readA: m.at }); } catch (x) { fail(x); }
 }
@@ -857,7 +862,7 @@ document.addEventListener('click', e => {
   if (as) { const s = document.querySelector(`[data-pick="${CSS.escape(as.dataset.assign)}"]`); return assign(as.dataset.assign, s ? s.value : ''); }
   const un = t.closest('[data-unassign]'); if (un) return unassign(un.dataset.unassign);
   const cc = t.closest('[data-cancel]'); if (cc) return cancelRide(cc.dataset.cancel);
-  const mg = t.closest('[data-msg]'); if (mg) return msgDialog(mg.dataset.msg);
+  const mg = t.closest('[data-msg]'); if (mg) return msgDialog(mg.dataset.msg, mg.dataset.msgride);
   const tg = t.closest('[data-toggle]'); if (tg) return toggleDriver(tg.dataset.toggle);
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
