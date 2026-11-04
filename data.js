@@ -313,7 +313,7 @@
   const isRealDriver = d => !!(d && d.name && (d.phone || /^09\d{8}$/.test(d.id)));
   // 拒絕／逾時後自動挑下一位：線上空車、沒在接別張單、沒拒絕過、點數夠、GPS 5 分鐘內有更新、開車到上車點在派單範圍內，取最近的
   // 搶單：派單時同時通知範圍內所有符合條件的司機，司機選「幾分鐘到」搶，先搶到的人接
-  const GRAB_SECS = 30, GRAB_KM = 5;
+  const GRAB_SECS = 20, GRAB_KM = 5;   // 搶單：20 秒內選幾分鐘到，時間到（或大家都回覆了）由分鐘最少的人接
   function grabCandidates(r, drivers, rides, km) {
     const p = fromCoord(r) || locate(r.from, r.fromArea).c;
     const excl = new Set(r.declinedBy || []);
@@ -327,11 +327,28 @@
       .sort((a, b) => a.km - b.km).map(x => x.d);
   }
   const offerOpen = r => r && r.status === 'offering' && Date.now() - (r.offerAt || 0) < (r.offerSecs || GRAB_SECS) * 1000;
-  // 搶單：交易確認這張單還在搶，才寫成自己的
+  // 搶單出價：司機選「幾分鐘到」，先記下來；每人只能出一次
   function grabRide(id, me, mins) {
     return db.update('rides', id, cur => {
       if (!offerOpen(cur) || !(cur.offerTo || []).includes(me.phone) || (cur.declinedBy || []).includes(me.phone)) return null;
-      return { status: 'pickup', driverPhone: me.phone, driverName: me.name || me.phone, plate: me.plate || '', assignedAt: Date.now(), acceptedAt: Date.now(), promisedMin: mins, grabbed: true };
+      if ((cur.bids || []).some(b => b.phone === me.phone)) return null;
+      return { bids: (cur.bids || []).concat({ phone: me.phone, name: me.name || me.phone, plate: me.plate || '', min: mins, at: Date.now() }) };
+    });
+  }
+  // 分鐘最少的人得標；一樣快就看誰先按
+  const bestBid = r => (r.bids || []).slice().sort((a, b) => a.min - b.min || a.at - b.at)[0] || null;
+  // 收到單的人都回覆了（出價或不搶），或時間到，就可以決定
+  const grabDone = r => {
+    const to = r.offerTo || [], said = new Set((r.bids || []).map(b => b.phone).concat(r.declinedBy || []));
+    return to.length > 0 && to.every(p => said.has(p)) || Date.now() - (r.offerAt || 0) >= (r.offerSecs || GRAB_SECS) * 1000;
+  };
+  // 決定得標者（任何一方呼叫都可以，用交易確保只決定一次）
+  function resolveGrab(id) {
+    return db.update('rides', id, cur => {
+      if (!cur || cur.status !== 'offering' || !grabDone(cur)) return null;
+      const w = bestBid(cur), now = Date.now();
+      if (w) return { status: 'pickup', driverPhone: w.phone, driverName: w.name, plate: w.plate || '', assignedAt: now, acceptedAt: now, promisedMin: w.min, grabbed: true };
+      return Date.now() - (cur.offerAt || 0) >= (cur.offerSecs || GRAB_SECS) * 1000 || (cur.offerTo || []).length ? { status: 'pending', autoNote: '搶單沒人搶' } : null;
     });
   }
   function passRide(id, me) {
@@ -585,10 +602,10 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.04-02',
+    VERSION: '2026.11.04-03',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
-    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
+    drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機

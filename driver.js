@@ -98,10 +98,15 @@ function onRides(list, meta) {
   // 搶單：正在看的搶單，如果被別人搶走、時間到或收回就收起來
   if (S.grab && CUR) {
     const cur = list.find(x => x.id === CUR.id);
-    if (r && r.id === CUR.id) S.grab = false;                       // 我搶到了，下面照一般流程
-    else if (r || !cur || !BBC.offerOpen(cur) || !(cur.offerTo || []).includes(ME.phone) || (cur.declinedBy || []).includes(ME.phone)) {
-      dropOffer(r ? '' : cur && cur.driverPhone && cur.driverPhone !== ME.phone ? `慢了一步，${cur.driverName} 搶到了` : cur && cur.status === 'cancelled' ? '管理員已取消這張單' : '');
-    } else { CUR = cur; render(); return; }
+    const myBid = cur && (cur.bids || []).find(b => b.phone === ME.phone);
+    if (r && r.id === CUR.id) { S.grab = false; S.bid = 0; toast(`你得標了！請在 ${r.promisedMin} 分鐘內到上車點`); speak('搶單成功，' + r.promisedMin + '分鐘內到'); }
+    else if (cur && cur.status === 'offering' && (myBid || BBC.offerOpen(cur)) && !(cur.declinedBy || []).includes(ME.phone) && !r) {
+      CUR = cur; S.bid = myBid ? myBid.min : 0;
+      if (BBC.grabDone(cur)) BBC.resolveGrab(cur.id).catch(() => {});   // 大家都回覆了 → 決定由誰接
+      render(); return;
+    } else {
+      dropOffer(r ? '' : cur && cur.driverPhone && cur.driverPhone !== ME.phone && cur.grabbed ? `${cur.driverName} 選 ${cur.promisedMin} 分鐘，比較快，由他接` : cur && cur.status === 'cancelled' ? '管理員已取消這張單' : S.bid ? '這張單沒有成交' : '');
+    }
   }
   // 沒有派給我的單時，看看有沒有可以搶的單
   if (!r && !CUR && ONLINE && S.status === 'searching') {
@@ -148,7 +153,7 @@ function startRequest() {
   stopCountdown();
   countT = setInterval(() => {
     S.left -= 1;
-    if (S.left <= 0) { if (S.grab) dropOffer('搶單時間到'); else { A.decline('逾時未接'); toast('超過時間未接單，已退回給管理平台'); } }
+    if (S.left <= 0) { if (S.grab && S.bid) { stopCountdown(); BBC.resolveGrab(CUR.id).catch(() => {}); } else if (S.grab) dropOffer('搶單時間到'); else { A.decline('逾時未接'); toast('超過時間未接單，已退回給管理平台'); } }
     else updateCountdown();
   }, 1000);
   try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
@@ -156,7 +161,7 @@ function startRequest() {
 }
 // 收起搶單（被搶走、時間到、不搶）
 function dropOffer(msg) {
-  stopCountdown(); CUR = null; S.grab = false; S.declining = false;
+  stopCountdown(); CUR = null; S.grab = false; S.bid = 0; S.declining = false;
   S.status = ONLINE ? 'searching' : 'offline';
   if (msg) toast(msg);
   render();
@@ -403,15 +408,13 @@ const A = {
     const r = CUR, need = estNeed(r);
     if (need && balance() < need) return toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
     ACCEPTING = true;
-    let won = null;
-    try { won = await BBC.grabRide(r.id, ME, mins); } catch (e) { fail(e); }
+    let ok = null;
+    try { ok = await BBC.grabRide(r.id, ME, mins); } catch (e) { fail(e); }
     ACCEPTING = false;
-    if (!won) return dropOffer('慢了一步，這張單已經被搶走了');
+    if (!ok) return dropOffer('這張單已經結束搶單了');
     if (!CUR || CUR.id !== r.id) return;
-    stopCountdown(); S.grab = false;
-    CUR = Object.assign({}, r, won); S.status = 'pickup';
-    toast(`搶到了！請在 ${mins} 分鐘內到上車點`); speak('搶單成功，' + mins + '分鐘內到');
-    presence(); render();
+    S.bid = mins; render();
+    toast(`已選 ${mins} 分鐘，等其他司機選完，分鐘最少的人接`);
   },
   grab5() { A.grab(5); }, grab10() { A.grab(10); }, grab15() { A.grab(15); },
   pass() { if (!CUR || !S.grab) return; const id = CUR.id; BBC.passRide(id, ME).catch(() => {}); dropOffer('已略過這張單'); },
@@ -644,8 +647,10 @@ function sheetHTML() {
         <div class="stop"><div class="dot" style="background:var(--yellow)"></div><div>${esc(BBC.toText(r))}</div></div>
       </div>
       ${r.note ? `<div class="dim" style="font-size:14px;background:#2D3833;padding:8px 12px;border-radius:10px">備註：${esc(r.note)}</div>` : ''}
-      ${S.grab
-        ? `<div class="whyno"><p style="font-weight:700">你幾分鐘可以到上車點？按下去就搶，先搶到的人接</p>
+      ${S.grab && S.bid
+        ? `<div class="whyno"><p style="font-weight:700">你選了 ${S.bid} 分鐘，等其他司機選完…</p><p class="dim" style="font-size:14px">分鐘最少的人接這張單；一樣快就看誰先按。${(r.bids || []).length} / ${(r.offerTo || []).length} 人已選</p></div>`
+        : S.grab
+        ? `<div class="whyno"><p style="font-weight:700">你幾分鐘可以到上車點？選最少分鐘的人接這張單</p>
           <div class="grabgrid"><button data-a="grab5">5 分鐘</button><button data-a="grab10">10 分鐘</button><button data-a="grab15">15 分鐘</button></div>
           <button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
@@ -744,7 +749,7 @@ function render() {
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
-    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '');
+    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '') + (S.bid || '') + (S.grab && CUR ? ':' + (CUR.bids || []).length : '');
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.fromCoord(CUR) || BBC.locate(CUR.from || '', CUR.fromArea || '').c });

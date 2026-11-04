@@ -58,7 +58,7 @@ function enter(a) {
   unsub.push(db.watch('rides', l => {
     // 司機拒絕時跳通知
     if (RIDES_SEEN) l.forEach(r => { const n = (r.declines || []).length, o = RIDES_SEEN[r.id]; if (o != null && n > o && r.status !== 'offering') { const x = r.declines[n - 1]; toast(`${x.name} 沒接行程 ${r.id}（${x.reason}），` + (r.status === 'assigned' ? `已自動改派給 ${r.driverName}` : '沒有其他可派的司機，已回到待派單')); } });
-    if (RIDES_ST) l.forEach(r => { const o = RIDES_ST[r.id]; if (o === 'offering' && r.status === 'pickup' && r.grabbed) toast(`🏁 ${r.driverName} 搶到行程 ${r.id}，預計 ${r.promisedMin} 分鐘到`); });
+    if (RIDES_ST) l.forEach(r => { const o = RIDES_ST[r.id]; if (o === 'offering' && r.status === 'pickup' && r.grabbed) toast(`🏁 ${r.driverName} 選 ${r.promisedMin} 分鐘最快，接下行程 ${r.id}（${(r.bids || []).map(b => b.name + ' ' + b.min + ' 分').join('、')}）`); });
     RIDES_ST = {}; l.forEach(r => { RIDES_ST[r.id] = r.status; });
     RIDES_SEEN = {}; l.forEach(r => { RIDES_SEEN[r.id] = (r.declines || []).length; });
     RIDES = l; renderAll();
@@ -117,7 +117,7 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needA
   const list = available(exclude);
   const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
-  let html = withAuto ? `<option value="__grab">搶單：同時通知 ${grabKm()} 公里內的司機，誰搶到誰去</option><option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（${rangeLabel()}）</option>` : '<option value="">選擇司機…</option>';
+  let html = withAuto ? `<option value="__grab">搶單：同時通知 ${grabKm()} 公里內的司機，選最少分鐘的人接</option><option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（${rangeLabel()}）</option>` : '<option value="">選擇司機…</option>';
   html += rows.length
     ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點約 ' + BBC.roadKm(km) + ' 公里車程、' + BBC.etaMin(km) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超出派單範圍，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
@@ -430,7 +430,8 @@ function renderRides() {
         ${(r.declinedBy || []).length ? `<span class="t">已被 ${r.declinedBy.length} 位司機拒絕${(r.declines || []).length ? '：' + r.declines.map(x => esc(x.name) + '（' + esc(x.reason) + '）').join('、') : ''}</span>` : ''}
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'offering') {
-      act = `<span class="t">搶單中：已通知 ${(r.offerTo || []).length} 位司機（${esc((r.offerNames || []).join('、'))}）<b data-left="${r.offerAt}"></b>${(r.declinedBy || []).length ? ' · ' + r.declinedBy.length + ' 位不搶' : ''}</span>
+      act = `<span class="t">搶單中：已通知 ${(r.offerTo || []).length} 位司機（${esc((r.offerNames || []).join('、'))}）<b data-left="${r.offerAt}" data-secs="${r.offerSecs || BBC.GRAB_SECS}"></b>
+        ${(r.bids || []).length ? '<br>已選：' + r.bids.slice().sort((a, b) => a.min - b.min || a.at - b.at).map(b => esc(b.name) + ' ' + b.min + ' 分').join('、') : ''}${(r.declinedBy || []).length ? ' · ' + r.declinedBy.length + ' 位不搶' : ''}</span>
         <button class="sbtn" type="button" data-unassign="${esc(r.id)}">收回</button>
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'assigned') {
@@ -524,13 +525,12 @@ setInterval(() => {
     const old = Date.now() - r.assignedAt > 10 * 60000;   // 很久以前的舊單只退回待派單，不自動改派
     BBC.declineAndReassign(r, { phone: d.id || d.phone, name: d.name }, '逾時未回應', old ? [] : DRIVERS, RIDES, { min: limitMin(), km: limitKm() }).catch(fail);
   });
-  RIDES.filter(r => r.status === 'offering' && Date.now() - (r.offerAt || 0) > ((r.offerSecs || BBC.GRAB_SECS) + 3) * 1000).forEach(r => {
-    const k = 'o:' + r.id + ':' + r.offerAt; if (STALE_DONE[k]) return; STALE_DONE[k] = 1;
-    db.update('rides', r.id, cur => cur && cur.status === 'offering' && cur.offerAt === r.offerAt ? { status: 'pending', autoNote: '搶單沒人搶' } : null)
-      .then(p => { if (p) toast(`行程 ${r.id} 搶單 ${r.offerSecs || BBC.GRAB_SECS} 秒內沒人搶，已回到待派單`); }).catch(fail);
+  RIDES.filter(r => r.status === 'offering' && BBC.grabDone(r)).forEach(r => {
+    const k = 'o:' + r.id + ':' + r.offerAt + ':' + (r.bids || []).length + ':' + (r.declinedBy || []).length + ':' + (Date.now() - r.offerAt > (r.offerSecs || BBC.GRAB_SECS) * 1000); if (STALE_DONE[k]) return; STALE_DONE[k] = 1;
+    BBC.resolveGrab(r.id).then(p => { if (p && p.status === 'pending') toast(`行程 ${r.id} 搶單 ${r.offerSecs || BBC.GRAB_SECS} 秒內沒人選，已回到待派單`); }).catch(fail);
   });
   if (!$('rideList')) return;
-  document.querySelectorAll('[data-left]').forEach(el => { const s = Math.max(0, BBC.ACCEPT_SECS - Math.floor((Date.now() - +el.dataset.left) / 1000)); el.textContent = s ? `剩 ${s} 秒` : '逾時，改派中…'; });
+  document.querySelectorAll('[data-left]').forEach(el => { const s = Math.max(0, (+el.dataset.secs || BBC.ACCEPT_SECS) - Math.floor((Date.now() - +el.dataset.left) / 1000)); el.textContent = s ? `剩 ${s} 秒` : el.dataset.secs ? '決定中…' : '逾時，改派中…'; });
 }, 1000);   // 更新「最後回報」與斷線判斷
 
 // ---------- 對話框 ----------
