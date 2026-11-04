@@ -117,7 +117,7 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needA
   const list = available(exclude);
   const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
   const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
-  let html = withAuto ? `<option value="__grab">搶單：同時通知 ${grabKm()} 公里內的司機，選最少分鐘的人接</option><option value="">稍後指派（先放到待派單）</option><option value="__auto">自動派給最近的司機（${rangeLabel()}）</option>` : '<option value="">選擇司機…</option>';
+  let html = withAuto ? `<option value="__auto">自動派給最近的司機（${rangeLabel()}）</option><option value="__grab">搶單：同時通知 ${grabKm()} 公里內的司機，選最少分鐘的人接</option><option value="">稍後指派（先放到待派單）</option>` : '<option value="">選擇司機…</option>';
   html += rows.length
     ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點約 ' + BBC.roadKm(km) + ' 公里車程、' + BBC.etaMin(km) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超出派單範圍，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
@@ -294,7 +294,7 @@ function updateEstimate() {
   $('estBox').innerHTML = e
     ? (e.estFare == null ? `<span>未填下車地點：依跳表計費</span><span>起跳 <b>NT$${BBC.RATE.base}</b></span>` : `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`)
     : '<span>填好上車地址後會顯示預估（下車地點可不填）</span>';
-  const keep = $('d-driver').dataset.touched ? $('d-driver').value : '__grab';   // 預設用搶單
+  const keep = $('d-driver').dataset.touched ? $('d-driver').value : '__auto';   // 預設：自動派給最近的司機
   $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value, pickCoord('from'));
   if ([...$('d-driver').options].some(o => o.value === keep)) $('d-driver').value = keep;
 }
