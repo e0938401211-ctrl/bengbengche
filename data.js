@@ -358,6 +358,8 @@
   }
 
   async function geoReverse(lat, lng) {
+    // 先用中文反查；不行再用 Photon
+    try { const z = await zhAt(lat, lng); const road = z.road ? z.road + houseNo(z.no) : ''; if (z.name || road) return z.name && road && z.name !== z.road ? z.name + '（' + road + '）' : (z.name || road); } catch (e) {}
     try {
       const j = await (await fetch('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng)).json();
       const p = ((j.features || [])[0] || {}).properties || {};
@@ -365,6 +367,40 @@
       return p.name && road ? p.name + '（' + road + '）' : (p.name || road || '');
     } catch (e) { return ''; }
   }
+  // ---------- 英文地名改中文 ----------
+  // 有些地點在地圖資料裡只有英文路名（例：Shihhua 2nd Road），用 Nominatim 的中文反查換成「石化二路」
+  const hasLatin = s => /[A-Za-z]{3,}/.test(s || '');
+  let NOMI_Q = Promise.resolve();   // Nominatim 規定每秒最多一次，排隊送出
+  function zhAt(lat, lng) {
+    const key = 'bbc_zh_' + (+lat).toFixed(5) + ',' + (+lng).toFixed(5);
+    try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c) return Promise.resolve(c); } catch (e) {}
+    const job = NOMI_Q.then(async () => {
+      const u = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=zh-TW&lat=${lat}&lon=${lng}`;
+      const j = await (await fetchTimeout(u, null, 8000)).json();
+      const ad = j.address || {};
+      const r = { road: ad.road && !hasLatin(ad.road) ? ad.road : '', no: ad.house_number || '', name: j.name && !hasLatin(j.name) ? j.name : '' };
+      try { localStorage.setItem(key, JSON.stringify(r)); } catch (e) {}
+      return r;
+    });
+    NOMI_Q = job.catch(() => {}).then(() => new Promise(r => setTimeout(r, 1100)));
+    return job;
+  }
+  // 把搜尋結果的英文路名換成中文（label、sub 都會改）；成功回傳 true
+  async function zhFix(x) {
+    if (!x || !hasLatin(x.label + ' ' + (x.sub || ''))) return false;
+    try {
+      const z = await zhAt(x.lat, x.lng);
+      const road = z.road ? z.road + houseNo(z.no) : '';
+      const sub = (x.sub || '').split(' · ').map(s => hasLatin(s) ? road : s).filter(Boolean);
+      if (hasLatin(x.label)) {
+        const no = (x.label.match(/(\d+(之\d+)?號)$/) || [])[1] || '';
+        x.label = z.name && z.name !== z.road ? z.name : z.road ? z.road + (no || houseNo(z.no)) : x.label;
+      }
+      x.sub = sub.join(' · ');
+      return true;
+    } catch (e) { return false; }
+  }
+
   // 座標 → 縣市區（地圖選點用）
   async function reverseArea(lat, lng) {
     if (inKhh(lat, lng)) return areaOf(lat, lng);
@@ -697,9 +733,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.05-03',
+    VERSION: '2026.11.05-04',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,

@@ -55,6 +55,14 @@ function enter(a) {
   $('defaultPwBanner').hidden = !a.isDefaultPw;
   let dismissed = false; try { dismissed = sessionStorage.getItem('bbc_hide_localBanner') === '1'; } catch (e) {}
   $('localBanner').hidden = BBC.mode === 'cloud' || dismissed;
+  // 舊行程的英文地址換成中文（每次開管理平台最多處理 10 筆）
+  setTimeout(() => {
+    RIDES.filter(r => (BBC.hasLatin(r.from) && r.fromLat != null) || (BBC.hasLatin(r.to) && r.toLat != null)).slice(0, 10).forEach(async r => {
+      const up = {};
+      for (const k of ['from', 'to']) { const v = r[k], lat = r[k + 'Lat'], lng = r[k + 'Lng']; if (BBC.hasLatin(v) && lat != null) { const x = { label: v, sub: '', lat, lng }; if (await BBC.zhFix(x) && !BBC.hasLatin(x.label)) up[k] = x.label; } }
+      if (Object.keys(up).length) db.set('rides', r.id, up).catch(() => {});
+    });
+  }, 4000);
   unsub.push(db.watch('rides', l => {
     // 司機拒絕時跳通知
     if (RIDES_SEEN) l.forEach(r => { const n = (r.declines || []).length, o = RIDES_SEEN[r.id]; if (o != null && n > o && r.status !== 'offering') { const x = r.declines[n - 1]; toast(`${x.name} 沒接行程 ${r.id}（${x.reason}），` + (r.status === 'assigned' ? `已自動改派給 ${r.driverName}` : '沒有其他可派的司機，已回到待派單')); } });
@@ -211,11 +219,14 @@ async function searchSug(k) {
     SUG_MSG[k] = remote.length ? '' : '地址資料庫找不到這個門牌，可以先選上面的道路，再拖地圖上的大頭針到正確位置';
     SUG[k] = SUG[k].filter(x => x.kind !== 'remote').concat(extra);
     buildSug(k, true);
+    // 英文路名的結果：逐一換成中文後更新清單
+    extra.filter(x => BBC.hasLatin(x.label + ' ' + x.sub)).slice(0, 5).forEach(x => BBC.zhFix(x).then(ok => { if (ok && my === SUG_SEQ[k] && !$('sug-' + k).hidden) buildSug(k, true); }));
   } catch (e) { if (e.name !== 'AbortError' && my === SUG_SEQ[k]) { SUG_MSG[k] = '地址搜尋暫時無法使用，請選道路或在地圖上選位置'; buildSug(k, false); } }
 }
 function choose(k, x) {
   SUG_SEQ[k]++; clearTimeout(SUG_T[k]); if (SUG_AB[k]) SUG_AB[k].abort();   // 取消還沒回來的搜尋，免得清單又被打開
   $('d-' + k).value = x.label;
+  if (BBC.hasLatin(x.label)) { const was = x.label; BBC.zhFix(x).then(ok => { if (ok && $('d-' + k).value === was) $('d-' + k).value = x.label; }); }
   ROADPICK[k] = x.kind === 'road' ? x : null;
   $('sug-' + k).hidden = true; $('d-' + k).setAttribute('aria-expanded', 'false');
   if (x.kind === 'road' && x.lat == null) {
@@ -321,7 +332,7 @@ $('d-driver').addEventListener('change', () => { $('d-driver').dataset.touched =
 $('dispatchForm').addEventListener('submit', async e => {
   e.preventDefault();
   const err = $('dispatchErr');
-  const from = $('d-from').value.trim(), to = $('d-to').value.trim(), kmTxt = $('d-km').value.trim();
+  let from = $('d-from').value.trim(), to = $('d-to').value.trim(), kmTxt = $('d-km').value.trim();
   if (!from) return err.textContent = '請輸入上車地址';
   if (kmTxt && !(parseFloat(kmTxt) > 0)) return err.textContent = '公里數要大於 0';
   // 高雄以外的地址沒從清單選：自動查一次位置（距離、派單範圍、導航都需要座標）
@@ -333,6 +344,11 @@ $('dispatchForm').addEventListener('submit', async e => {
     const hit = res.find(x => x.area === a) || res[0];
     if (!hit) return err.textContent = `找不到「${v}」的位置，請從下拉清單選，或按「在地圖上選上車點」直接點`;
     setPick(k, { lat: hit.lat, lng: hit.lng, area: hit.area || a });
+  }
+  // 還是英文的地址：送出前換成中文
+  for (const k of ['from', 'to']) {
+    const v = $('d-' + k).value.trim();
+    if (v && PICK[k] && BBC.hasLatin(v)) { const x = { label: v, sub: '', lat: PICK[k].lat, lng: PICK[k].lng }; err.textContent = '地址換成中文…'; if (await BBC.zhFix(x)) $('d-' + k).value = x.label; }
   }
   err.textContent = '';
   const est = currentEstimate();
