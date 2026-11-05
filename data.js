@@ -131,7 +131,7 @@
     return best;
   }
   const inKhh = (lat, lng) => lat > 22.43 && lat < 23.48 && lng > 120.15 && lng < 121.05;
-  const inTW = (lat, lng) => lat > 21.8 && lat < 26.45 && lng > 118.1 && lng < 122.1;
+  const inTW = (lat, lng) => lat > 21.8 && lat < 25.4 && lng > 119.95 && lng < 122.1;   // 台灣本島（不含澎湖、金門、連江）
 
   // ---------- 地址搜尋（OpenStreetMap 資料，不需金鑰） ----------
   // Photon 適合邊打邊搜；找不到時再用 Nominatim 補一次
@@ -147,7 +147,7 @@
     const query = (fa && !named && !nq.includes(distOf(area)) ? fa + ' ' : '') + q;
     const ctr = areaCenter(area);
     try {
-      const u = `https://photon.komoot.io/api/?limit=12&lat=${ctr[0]}&lon=${ctr[1]}&bbox=118.1,21.8,122.1,26.45&q=` + encodeURIComponent(query);
+      const u = `https://photon.komoot.io/api/?limit=12&lat=${ctr[0]}&lon=${ctr[1]}&bbox=119.95,21.8,122.1,25.4&q=` + encodeURIComponent(query);
       const j = await (await fetch(u, { signal })).json();
       (j.features || []).forEach(f => {
         const [lng, lat] = f.geometry.coordinates, p = f.properties || {};
@@ -697,7 +697,7 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.05-02',
+    VERSION: '2026.11.05-03',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
     distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
