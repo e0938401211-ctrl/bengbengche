@@ -263,6 +263,8 @@ function grabMin() {
   if (!LOC.pos || !f) return null;
   return Math.max(3, BBC.etaMin(BBC.distKm([LOC.pos.lat, LOC.pos.lng], f)));
 }
+// 最慢：最快再加五成（至少多 2 分鐘），最多 15 分鐘
+const grabMax = lo => Math.min(15, lo + Math.max(2, Math.round(lo * 0.5)));
 function grabKmText() {
   if (APP.data) return APP.data.km.toFixed(1) + ' 公里';
   const f = pickupPoint(CUR);
@@ -435,6 +437,7 @@ const A = {
     const lo = grabMin();
     if (lo == null) return toast('還在依你的位置計算到上車點要幾分鐘，請稍等一下');
     if (mins < lo) return toast(`你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘`);
+    if (mins !== lo && mins !== grabMax(lo)) return;
     const r = CUR, need = estNeed(r);
     if (need && balance() < need) return toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
     ACCEPTING = true;
@@ -700,9 +703,9 @@ function sheetHTML() {
           ? `<div class="whyno"><p style="font-weight:700">正在依你的位置計算到上車點要幾分鐘…</p><p class="dim" style="font-size:14px">需要開啟 GPS 定位</p>`
           : lo > 15
           ? `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘，超過 15 分鐘不能搶</p>`
-          : `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快 <b style="color:var(--yellow)">${lo} 分鐘</b>到。選幾分鐘到？分鐘最少的人接這張單</p>
-          <div class="grabgrid">${Array.from({ length: 13 }, (_, i) => i + 3).map(m => m < lo ? `<button disabled class="off" aria-label="${m} 分鐘（太快，不能選）">${m}<small>分</small></button>` : `<button data-grab="${m}"${m === lo ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
-          <p class="dim" style="font-size:13px">${APP.data && !APP.data.rough ? '依實際道路路線計算' : '依距離估算（道路約直線 1.35 倍、市區時速約 30 公里）'}；比最快時間還少的分鐘不能選</p>`)(grabMin())
+          : `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}。選你幾分鐘到，分鐘最少的人接這張單</p>
+          <div class="grabtwo">${[...new Set([lo, grabMax(lo)])].map((m, i) => `<button data-grab="${m}"${i === 0 ? ' class="sug"' : ''}><span>${i === 0 ? '最快' : '最慢'}</span>${m}<small> 分鐘</small></button>`).join('')}</div>
+          <p class="dim" style="font-size:13px">${APP.data && !APP.data.rough ? '依實際道路路線計算' : '依距離估算（道路約直線 1.35 倍、市區時速約 30 公里）'}</p>`)(grabMin())
           + `<button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
         ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
