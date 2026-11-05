@@ -437,7 +437,7 @@ const A = {
     const lo = grabMin();
     if (lo == null) return toast('還在依你的位置計算到上車點要幾分鐘，請稍等一下');
     if (mins < lo) return toast(`你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘`);
-    if (mins !== lo && mins !== grabMax(lo)) return;
+    if (mins > grabMax(lo)) return;
     const r = CUR, need = estNeed(r);
     if (need && balance() < need) return toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
     ACCEPTING = true;
@@ -704,7 +704,7 @@ function sheetHTML() {
           : lo > 15
           ? `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘，超過 15 分鐘不能搶</p>`
           : `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}。選你幾分鐘到，分鐘最少的人接這張單</p>
-          <div class="grabtwo">${[...new Set([lo, grabMax(lo)])].map((m, i) => `<button data-grab="${m}"${i === 0 ? ' class="sug"' : ''}><span>${i === 0 ? '最快' : '最慢'}</span>${m}<small> 分鐘</small></button>`).join('')}</div>
+          ${(hi => `<div class="grabtwo" style="grid-template-columns:repeat(${hi - lo + 1 <= 5 ? hi - lo + 1 : Math.ceil((hi - lo + 1) / 2)},1fr)">${Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map(m => `<button data-grab="${m}"${m === lo ? ' class="sug"' : ''}><span>${m === lo ? '最快' : m === hi ? '最慢' : '&nbsp;'}</span>${m}<small> 分鐘</small></button>`).join('')}</div>`)(grabMax(lo))}
           <p class="dim" style="font-size:13px">${APP.data && !APP.data.rough ? '依實際道路路線計算' : '依距離估算（道路約直線 1.35 倍、市區時速約 30 公里）'}</p>`)(grabMin())
           + `<button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
