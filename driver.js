@@ -255,6 +255,19 @@ function etaText() {
   if (!d) return APP.loading ? '正在規劃路線…' : LOC.pos ? '' : '開啟 GPS 定位後會顯示到上車點的路線';
   return `開過去約 ${d.min} 分鐘 · ${d.km.toFixed(1)} 公里${d.rough ? '（直線估算）' : ''}`;
 }
+// 搶單：依你到上車點的距離算出「最快幾分鐘」，比這個快的不能選（最多 15 分鐘）
+// 有道路路線就用路線的開車時間；沒有就用距離估算（道路約直線 1.35 倍、市區約時速 30 公里）
+function grabMin() {
+  if (APP.data) return Math.max(1, Math.ceil(APP.data.min));
+  const f = pickupPoint(CUR);
+  if (!LOC.pos || !f) return null;
+  return BBC.etaMin(BBC.distKm([LOC.pos.lat, LOC.pos.lng], f));
+}
+function grabKmText() {
+  if (APP.data) return APP.data.km.toFixed(1) + ' 公里';
+  const f = pickupPoint(CUR);
+  return LOC.pos && f ? BBC.roadKm(BBC.distKm([LOC.pos.lat, LOC.pos.lng], f)) + ' 公里' : '';
+}
 function setEtaText() { ['etaLine', 'etaLine2'].forEach(id => { const el = $(id); if (el) el.textContent = etaText(); }); }
 function updateApproach() {
   const r = CUR, on = r && (S.status === 'request' || S.status === 'pickup');
@@ -280,6 +293,7 @@ function updateApproach() {
     APP.loading = false;
     if (APP.rideId !== id) return;
     APP.data = d; drawApproach(); setEtaText();
+    if (S.grab && !S.bid) render();   // 搶單：依距離算出的最快分鐘出來後，更新可選的按鈕
     if (S.status === 'pickup') { const k = $('etaLine2'); if (!k) render(); }
     if (S.grab && !S.bid) { $('sheet').dataset.s = ''; render(); }   // 搶單：路線算好後標出建議分鐘
   });
@@ -418,6 +432,9 @@ const A = {
   // 搶單：選「幾分鐘到」，先搶到的人接
   async grab(mins) {
     if (!CUR || !S.grab || ACCEPTING) return;
+    const lo = grabMin();
+    if (lo == null) return toast('還在依你的位置計算到上車點要幾分鐘，請稍等一下');
+    if (mins < lo) return toast(`你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘`);
     const r = CUR, need = estNeed(r);
     if (need && balance() < need) return toast(`點數不足：這張單預估要扣 ${need} 點回金，你只剩 ${fmt(balance())} 點，請聯絡管理員儲值`);
     ACCEPTING = true;
@@ -679,10 +696,14 @@ function sheetHTML() {
       ${S.grab && S.bid
         ? `<div class="whyno"><p style="font-weight:700">你選了 ${S.bid} 分鐘，等其他司機選完…</p><p class="dim" style="font-size:14px">分鐘最少的人接這張單；一樣快就看誰先按。${(r.bids || []).length} / ${(r.offerTo || []).length} 人已選</p></div>`
         : S.grab
-        ? `<div class="whyno"><p style="font-weight:700">你幾分鐘可以到上車點？選最少分鐘的人接這張單</p>
-          <div class="grabgrid">${Array.from({ length: 15 }, (_, i) => i + 1).map(m => `<button data-grab="${m}"${APP.data && !APP.data.rough && m === Math.min(15, APP.data.min) ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
-          ${APP.data ? `<p class="dim" style="font-size:13px">路線估計約 ${APP.data.min} 分鐘${APP.data.rough ? '（直線估算）' : '，已標出建議'}</p>` : ''}
-          <button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
+        ? (lo => lo == null
+          ? `<div class="whyno"><p style="font-weight:700">正在依你的位置計算到上車點要幾分鐘…</p><p class="dim" style="font-size:14px">需要開啟 GPS 定位</p>`
+          : lo > 15
+          ? `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘，超過 15 分鐘不能搶</p>`
+          : `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快 <b style="color:var(--yellow)">${lo} 分鐘</b>到。選幾分鐘到？分鐘最少的人接這張單</p>
+          <div class="grabgrid">${Array.from({ length: 15 }, (_, i) => i + 1).map(m => m < lo ? `<button disabled class="off" aria-label="${m} 分鐘（太快，不能選）">${m}<small>分</small></button>` : `<button data-grab="${m}"${m === lo ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
+          <p class="dim" style="font-size:13px">${APP.data && !APP.data.rough ? '依實際道路路線計算' : '依距離估算（道路約直線 1.35 倍、市區時速約 30 公里）'}；比最快時間還少的分鐘不能選</p>`)(grabMin())
+          + `<button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
         ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
           <div class="whygrid"><button data-a="declineBusy">正在忙</button><button data-a="declinePlain">拒絕</button></div></div>`
@@ -780,7 +801,7 @@ function render() {
   $('tab-home').setAttribute('aria-selected', S.tab === 'home');
   $('tab-earn').setAttribute('aria-selected', S.tab === 'earn');
   if (S.tab === 'home') {
-    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '') + (ME && $('chat').hidden ? 'u' + unreadAdmin() : '') + (S.bid || '') + (S.grab && CUR ? ':' + (CUR.bids || []).length : '');
+    const sheet = $('sheet'), key = S.status + (r ? r.id : '') + S.unread + (S.declining ? 'd' : '') + (ME && $('chat').hidden ? 'u' + unreadAdmin() : '') + (S.bid || '') + (S.grab && CUR ? ':' + (CUR.bids || []).length + 'g' + grabMin() : '');
     if (sheet.dataset.s === key && (S.status === 'request' || S.status === 'trip')) return;  // 倒數與跳表自己更新數字
     sheet.innerHTML = sheetHTML(); sheet.dataset.s = key;
     if (S.status === 'done' && CUR) BBC.drawRoute($('doneMap'), CUR.track, { fallback: BBC.fromCoord(CUR) || BBC.locate(CUR.from || '', CUR.fromArea || '').c });
