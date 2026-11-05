@@ -258,10 +258,10 @@ function etaText() {
 // 搶單：依你到上車點的距離算出「最快幾分鐘」，比這個快的不能選（最多 15 分鐘）
 // 有道路路線就用路線的開車時間；沒有就用距離估算（道路約直線 1.35 倍、市區約時速 30 公里）
 function grabMin() {
-  if (APP.data) return Math.max(1, Math.ceil(APP.data.min));
+  if (APP.data) return Math.max(3, Math.ceil(APP.data.min));   // 最少 3 分鐘（不提供 1、2 分鐘）
   const f = pickupPoint(CUR);
   if (!LOC.pos || !f) return null;
-  return BBC.etaMin(BBC.distKm([LOC.pos.lat, LOC.pos.lng], f));
+  return Math.max(3, BBC.etaMin(BBC.distKm([LOC.pos.lat, LOC.pos.lng], f)));
 }
 function grabKmText() {
   if (APP.data) return APP.data.km.toFixed(1) + ' 公里';
@@ -701,7 +701,7 @@ function sheetHTML() {
           : lo > 15
           ? `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快要 ${lo} 分鐘，超過 15 分鐘不能搶</p>`
           : `<div class="whyno"><p style="font-weight:700">你離上車點約 ${grabKmText()}，最快 <b style="color:var(--yellow)">${lo} 分鐘</b>到。選幾分鐘到？分鐘最少的人接這張單</p>
-          <div class="grabgrid">${Array.from({ length: 15 }, (_, i) => i + 1).map(m => m < lo ? `<button disabled class="off" aria-label="${m} 分鐘（太快，不能選）">${m}<small>分</small></button>` : `<button data-grab="${m}"${m === lo ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
+          <div class="grabgrid">${Array.from({ length: 13 }, (_, i) => i + 3).map(m => m < lo ? `<button disabled class="off" aria-label="${m} 分鐘（太快，不能選）">${m}<small>分</small></button>` : `<button data-grab="${m}"${m === lo ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
           <p class="dim" style="font-size:13px">${APP.data && !APP.data.rough ? '依實際道路路線計算' : '依距離估算（道路約直線 1.35 倍、市區時速約 30 公里）'}；比最快時間還少的分鐘不能選</p>`)(grabMin())
           + `<button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
