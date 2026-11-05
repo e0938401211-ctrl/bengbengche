@@ -413,7 +413,9 @@ function startMeter() {
 
 // ---------- 動作 ----------
 const A = {
-  online() { ONLINE = true; S.status = 'searching'; FOLLOW = true; startLocate(); presence(); render(); },
+  online() {
+    if (ME && ME.approved === false) return toast('帳號審核中，管理員核准後才能上線接單');
+    ONLINE = true; S.status = 'searching'; FOLLOW = true; startLocate(); presence(); render(); },
   offline() { ONLINE = false; S.status = 'offline'; if (!GEO.rec) stopLocate(); presence(); render(); },
   async accept() {
     if (!CUR || ACCEPTING) return;
@@ -677,7 +679,8 @@ function syncThread() { const t = ME ? thread() : ''; if (t === LAST_THREAD) ret
 function sheetHTML() {
   const r = CUR || {};
   switch (S.status) {
-    case 'offline': return `<div class="offline-wrap"><button class="online" data-a="online">上線</button>
+    case 'offline': if (ME && ME.approved === false) return `<div class="card center">${LOGO}<p class="h2">${esc(ME.name)}，帳號審核中</p><p class="sub">已收到你的註冊資料，管理員核准後就能上線接單。核准時這裡會自動更新，不用重新登入。</p><button class="outline" data-a="chat" style="position:relative">聯絡管理平台${badge()}</button></div>`;
+      return `<div class="offline-wrap"><button class="online" data-a="online">上線</button>
       <div class="card center">${LOGO}<p class="h2">${ME ? esc(ME.name) + '，' : ''}您目前離線</p><p class="sub">按「上線」開始接收管理平台的派單</p></div></div>`;
     case 'searching': return `<div class="card searching"><div class="track"><div class="fill"></div></div>
       <div class="row"><div><p class="h2">上線中，等待派單…</p><p class="sub">管理平台派單後會立即顯示在這裡</p></div><button class="outline" data-a="offline">下線</button></div>
@@ -843,7 +846,9 @@ function enter(d) {
     const me = list.find(x => x.id === ME.phone);
     if (!me) return;   // 名單裡暫時找不到自己時不登出（被刪除的帳號下次登入時會被擋下）
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
+    const wasPending = ME.approved === false;
     ME = withPhone(me);
+    if (wasPending && me.approved !== false) { toast('管理員已核准你的帳號，可以上線接單了！'); speak('帳號已核准'); render(); }
     onMsgs();
   });
   unsubR = db.watch('rides', onRides);
@@ -874,7 +879,7 @@ $('regForm').addEventListener('submit', async e => {
     const d = {
       name, phone, plate, brand, model, color: $('reg-color').value, seats: $('reg-seats').value,
       fuel: $('reg-fuel').value, service: $('reg-service').value,
-      pw: await BBC.hashPw(phone, pw), active: true, status: 'offline', area: AREA, createdAt: Date.now(), lastSeen: Date.now()
+      pw: await BBC.hashPw(phone, pw), active: true, approved: false, status: 'offline', area: AREA, createdAt: Date.now(), lastSeen: Date.now()
     };
     await db.set('drivers', phone, d);
     e.target.reset(); fillModels();

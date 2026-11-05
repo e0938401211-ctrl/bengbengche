@@ -512,6 +512,7 @@
   }
   function driverState(d) {
     if (!d || d.active === false) return 'disabled';
+    if (d.approved === false) return 'pending';   // 自己註冊、還沒被管理員核准
     if (!d.status || d.status === 'offline') return 'offline';
     if (Date.now() - (d.lastSeen || 0) > ONLINE_STALE_MS) return 'lost';
     return d.status; // online | busy
@@ -748,6 +749,6 @@
     // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）
     rideRate: r => r && r.commissionRate != null ? Number(r.commissionRate) : null,
     STATUS_TEXT: { pending: '待派單', offering: '搶單中', assigned: '已派單', pickup: '前往上車', trip: '載客中', done: '已完成', cancelled: '已取消' },
-    DRIVER_TEXT: { online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
+    DRIVER_TEXT: { pending: '待核准', online: '線上空車', busy: '載客中', offline: '離線', lost: '斷線', disabled: '已停用' }
   };
 })();

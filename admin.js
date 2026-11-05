@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'offering', 'assigned', 'pickup', 'trip'];
 
-let RIDES_ST = null, RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null, MSG_RIDE = '';
+let PENDING_SEEN = null, RIDES_ST = null, RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null, MSG_RIDE = '';
 let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN, dispatchKm: 0 };
 let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
@@ -73,6 +73,9 @@ function enter(a) {
   }));
   unsub.push(db.watch('drivers', l => {
     JUNK = l.filter(d => !BBC.isRealDriver(d)); DRIVERS = l.filter(BBC.isRealDriver);
+    // 新司機自己註冊：跳通知請管理員核准
+    DRIVERS.filter(d => d.approved === false).forEach(d => { if (PENDING_SEEN && !PENDING_SEEN.has(d.id)) toast(`🆕 新司機 ${d.name}（${d.id}）申請註冊，請到「司機」核准`); });
+    PENDING_SEEN = new Set(DRIVERS.filter(d => d.approved === false).map(d => d.id));
     // 司機傳來新訊息：跳通知
     DRIVERS.forEach(d => { const at = d.msgAtD || 0, o = MSG_SEEN_A[d.id]; if (o != null && at > o && MSG_OPEN !== d.id) { const m = (d.msgs || []).filter(x => x.f === 'd').pop(); if (m) toast(`💬 ${d.name}${m.r ? '（行程 ' + m.r + '）' : ''}：${m.t}`); } MSG_SEEN_A[d.id] = at; });
     renderAll(); if (MSG_OPEN) renderMsgDialog();
@@ -513,6 +516,7 @@ function renderRides() {
 // ---------- 畫面：司機 ----------
 const DRIVER_FILTERS = [
   ['all', '全部', () => true],
+  ['pending', '待核准', d => state(d) === 'pending'],
   ['online', '線上空車', d => state(d) === 'online'],
   ['busy', '載客中', d => state(d) === 'busy'],
   ['offline', '離線／斷線', d => ['offline', 'lost'].includes(state(d))],
@@ -525,7 +529,7 @@ function renderDrivers() {
   $('driverFilters').innerHTML = DRIVER_FILTERS.map(([k, label, fn]) =>
     `<button type="button" class="chip" data-df="${k}" aria-pressed="${driverFilter === k}">${label}<i>${DRIVERS.filter(fn).length}</i></button>`).join('');
   const fn = DRIVER_FILTERS.find(f => f[0] === driverFilter)[2];
-  const order = { busy: 0, online: 1, lost: 2, offline: 3, disabled: 4 };
+  const order = { pending: -1, busy: 0, online: 1, lost: 2, offline: 3, disabled: 4 };   // 待核准排最上面
   const t0 = todayStart();
   const list = DRIVERS.filter(fn).sort((a, b) => (order[state(a)] - order[state(b)]) || String(a.name).localeCompare(String(b.name), 'zh-Hant'));
   if (!list.length) {
@@ -547,6 +551,7 @@ function renderDrivers() {
       <td data-label="最後回報" class="num small">${BBC.ago(d.lastSeen)}</td>
       <td data-label="帳號管理"><div class="rowact">
         <button class="sbtn${unreadOf(d) ? ' primary' : ''}" type="button" data-msg="${esc(d.id)}">訊息${unreadOf(d) ? '（' + unreadOf(d) + '）' : ''}</button>
+        ${d.approved === false ? `<button class="sbtn primary" type="button" data-approve="${esc(d.id)}">核准</button>` : ''}
         <button class="sbtn" type="button" data-toggle="${esc(d.id)}">${d.active === false ? '啟用' : '停用'}</button>
         <button class="sbtn" type="button" data-resetpw="${esc(d.id)}">重設密碼</button>
         <button class="sbtn danger" type="button" data-deldrv="${esc(d.id)}">刪除</button>
@@ -642,6 +647,11 @@ function deleteDriverDialog(id) {
     <p class="sub">${busy ? '這位司機還有進行中的行程，請先取消或等行程結束。' : '刪除後司機 App 會立刻登出，這個手機號碼可以重新註冊。過去的行程紀錄會保留。'}</p>
     <div class="mrow"><button class="sbtn" type="button" data-close>取消</button>${busy ? '' : '<button class="btn red" type="button" id="mOk">刪除帳號</button>'}</div>`);
   if (!busy) $('mOk').onclick = async () => { try { await db.remove('drivers', id); closeModal(); toast('帳號已刪除'); } catch (x) { fail(x); } };
+}
+// 核准自己註冊的司機（核准前不能上線、不會被派單）
+async function approveDriver(id) {
+  const d = DRIVERS.find(x => x.id === id); if (!d) return;
+  try { await db.set('drivers', id, { approved: true, approvedAt: Date.now(), approvedBy: ADMIN.id }); toast(`已核准 ${d.name}，他現在可以上線接單了`); } catch (x) { fail(x); }
 }
 async function toggleDriver(id) {
   const d = DRIVERS.find(x => x.id === id); if (!d) return;
@@ -911,6 +921,7 @@ document.addEventListener('click', e => {
   const mg = t.closest('[data-msg]'); if (mg) return msgDialog(mg.dataset.msg, mg.dataset.msgride);
   const tg = t.closest('[data-toggle]'); if (tg) return toggleDriver(tg.dataset.toggle);
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
+  const ap = t.closest('[data-approve]'); if (ap) return approveDriver(ap.dataset.approve);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
   const rt = t.closest('[data-route]'); if (rt) return routeDialog(rt.dataset.route);
   if (t.closest('#fitMapBtn')) return fitDriverMap();
