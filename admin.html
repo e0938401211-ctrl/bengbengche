@@ -66,7 +66,10 @@ header.top .in { max-width: 1440px; margin: 0 auto; padding-block: 12px; padding
 
 /* form */
 .form { display: flex; flex-direction: column; gap: 12px; }
-.f2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 130px); gap: 8px; }
+.f2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); gap: 8px; }
+.cityarea { display: flex; gap: 6px; }
+.cityarea select { flex: 1 1 0; min-width: 0; padding: 0 6px; }
+@media (max-width: 600px) { .f2:has(.cityarea) { grid-template-columns: minmax(0, 1fr); } .f2:has(.cityarea) > .field:last-child { order: -1; } }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .field label { font-size: 13px; font-weight: 500; color: var(--muted); }
 .field input, .field select, .field textarea { height: 42px; border: 1.5px solid var(--line); border-radius: 10px; padding: 0 12px; background: #fff; width: 100%; min-width: 0; }
@@ -275,11 +278,11 @@ table.wtable, table.ltable { min-width: 720px; }
           </div>
           <div class="f2">
             <div class="field addr"><label for="d-from">上車地址</label><input id="d-from" placeholder="輸入路名門牌、店名或地標" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="sug-from" aria-expanded="false"><div class="sug" id="sug-from" role="listbox" hidden></div></div>
-            <div class="field"><label for="d-from-area">行政區</label><select id="d-from-area"></select></div>
+            <div class="field"><label for="d-from-city">縣市／行政區</label><div class="cityarea"><select id="d-from-city" aria-label="上車縣市"></select><select id="d-from-area" aria-label="上車行政區"></select></div></div>
           </div>
           <div class="f2">
             <div class="field addr"><label for="d-to">下車地址（可不填）</label><input id="d-to" placeholder="不填就依乘客指示" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="sug-to" aria-expanded="false"><div class="sug" id="sug-to" role="listbox" hidden></div></div>
-            <div class="field"><label for="d-to-area">行政區</label><select id="d-to-area"></select></div>
+            <div class="field"><label for="d-to-city">縣市／行政區</label><div class="cityarea"><select id="d-to-city" aria-label="下車縣市"></select><select id="d-to-area" aria-label="下車行政區"></select></div></div>
           </div>
           <div class="pickbox" id="pickBox" hidden>
             <div id="dMap" style="height:210px"></div>
@@ -361,12 +364,13 @@ table.wtable, table.ltable { min-width: 720px; }
 <div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" id="modalCard"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=202611051202"></script>
+<script src="config.js?v=202611051234"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-<script src="roads-khh.js?v=202611051202"></script>
-<script src="data.js?v=202611051202"></script>
-<script src="admin.js?v=202611051202"></script>
+<script src="tw-areas.js?v=202611051234"></script>
+<script src="roads-khh.js?v=202611051234"></script>
+<script src="data.js?v=202611051234"></script>
+<script src="admin.js?v=202611051234"></script>
 </body>
 </html>

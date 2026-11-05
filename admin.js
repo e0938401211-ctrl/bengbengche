@@ -125,11 +125,27 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needA
 }
 
 // ---------- 派單 ----------
-{
-  const opts = KHH.map(a => `<option>${a.d}</option>`).join('');
-  $('d-from-area').innerHTML = opts; $('d-to-area').innerHTML = opts;
-  $('d-from-area').value = '三民區'; $('d-to-area').value = '三民區';
+// 全台灣：先選縣市，再選行政區（高雄的區值為「左營區」，其他縣市為「臺北市大安區」）
+function fillAreas(k, city) {
+  const c = BBC.TW.find(x => x.c === city);
+  const list = city === '高雄市' ? KHH.map(a => a.d).concat(c ? c.d.filter(d => !KHH.some(a => a.d === d)) : []) : (c ? c.d : []);
+  $('d-' + k + '-area').innerHTML = list.map(d => `<option value="${esc(BBC.makeArea(city, d))}">${esc(d)}</option>`).join('');
 }
+function setAreaSel(k, area) {
+  if (!area) return;
+  const city = BBC.cityOf(area);
+  if ($('d-' + k + '-city').value !== city) { $('d-' + k + '-city').value = city; fillAreas(k, city); }
+  $('d-' + k + '-area').value = area;
+}
+['from', 'to'].forEach(k => {
+  $('d-' + k + '-city').innerHTML = BBC.TW.map(c => `<option>${esc(c.c)}</option>`).join('');
+  $('d-' + k + '-city').value = '高雄市'; fillAreas(k, '高雄市'); $('d-' + k + '-area').value = '三民區';
+  $('d-' + k + '-city').addEventListener('change', () => {
+    fillAreas(k, $('d-' + k + '-city').value);
+    $('d-' + k + '-area').dispatchEvent(new Event('change'));
+    if (DPM && !PICK.from && !PICK.to) BBC.areaCenterAsync($('d-' + k + '-area').value).then(c => DPM && DPM.setView(c, 12));
+  });
+});
 // ---------- 精準地址：邊打邊搜尋真實地點，地圖上可拖曳大頭針微調 ----------
 const PICK = { from: null, to: null };      // { lat, lng, area }
 const SUG = { from: [], to: [] };
@@ -161,7 +177,7 @@ function buildSug(k, keepRemote) {
     .map(s => ({ label: s.n, sub: '高雄市' + s.d + ' · 常用地標', lat: s.c[0], lng: s.c[1], area: s.d, kind: 'mark' })) : [];
   const all = ROADS[area] || [];
   const roads = all.filter(r => !q || r.name.includes(q) || q.startsWith(r.name)).slice(0, q ? 40 : 300)
-    .map(r => ({ label: r.name, sub: '高雄市' + area + ' · 道路（選了可以接著打門牌）', lat: r.lat, lng: r.lng, area, kind: 'road' }));
+    .map(r => ({ label: r.name, sub: BBC.fullArea(area) + ' · 道路（選了可以接著打門牌）', lat: r.lat, lng: r.lng, area, kind: 'road' }));
   const remote = keepRemote ? (SUG[k] || []).filter(x => x.kind === 'remote') : [];
   SUG[k] = marks.concat(roads, otherMarks, remote);
   const box = $('sug-' + k);
@@ -218,8 +234,11 @@ function choose(k, x) {
   if (x.kind === 'road') { const inp = $('d-' + k); inp.value = x.label; SKIP_FOCUS[k] = document.activeElement !== inp; setTimeout(() => { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }, 0); $('pickNote').textContent = '已選「' + x.label + '」，可接著輸入門牌號碼，或拖曳大頭針到正確位置'; }
 }
 function setPick(k, p) {
-  PICK[k] = p ? { lat: p.lat, lng: p.lng, area: p.area || BBC.areaOf(p.lat, p.lng) } : null;
-  if (PICK[k]) $('d-' + k + '-area').value = PICK[k].area;
+  const inK = p && p.lat > 22.43 && p.lat < 23.48 && p.lng > 120.15 && p.lng < 121.05;
+  PICK[k] = p ? { lat: p.lat, lng: p.lng, area: p.area || (inK ? BBC.areaOf(p.lat, p.lng) : $('d-' + k + '-area').value) } : null;
+  if (PICK[k]) setAreaSel(k, PICK[k].area);
+  // 高雄以外用地圖選的點：查出是哪個縣市區
+  if (p && !p.area && !inK) { const pk = PICK[k]; BBC.reverseArea(p.lat, p.lng).then(a => { if (a && PICK[k] === pk) { pk.area = a; setAreaSel(k, a); updateEstimate(); } }); }
   drawPickMap(); updateEstimate();
 }
 ['from', 'to'].forEach(k => {
@@ -305,6 +324,17 @@ $('dispatchForm').addEventListener('submit', async e => {
   const from = $('d-from').value.trim(), to = $('d-to').value.trim(), kmTxt = $('d-km').value.trim();
   if (!from) return err.textContent = '請輸入上車地址';
   if (kmTxt && !(parseFloat(kmTxt) > 0)) return err.textContent = '公里數要大於 0';
+  // 高雄以外的地址沒從清單選：自動查一次位置（距離、派單範圍、導航都需要座標）
+  for (const k of ['from', 'to']) {
+    const v = k === 'from' ? from : to, a = $('d-' + k + '-area').value;
+    if (!v || PICK[k] || BBC.cityOf(a) === '高雄市') continue;
+    err.textContent = '查詢「' + v + '」的位置…';
+    const res = await BBC.geoSearch(v, a).catch(() => []);
+    const hit = res.find(x => x.area === a) || res[0];
+    if (!hit) return err.textContent = `找不到「${v}」的位置，請從下拉清單選，或按「在地圖上選上車點」直接點`;
+    setPick(k, { lat: hit.lat, lng: hit.lng, area: hit.area || a });
+  }
+  err.textContent = '';
   const est = currentEstimate();
   let pick = $('d-driver').value, drv = null, grab = null;
   if (pick === '__grab') {

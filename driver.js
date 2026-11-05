@@ -56,7 +56,7 @@ let ONLINE = false;     // 是否上線接單
 let RIDES = [], ALL_DRIVERS = [];         // 所有行程（即時）
 let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
-const AREA = '高雄市全區';   // 司機不分區，服務範圍為高雄市全部 38 區
+const AREA = '全台灣';   // 司機不分區，服務範圍為全台灣
 let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null, unsubL = null;
 let LEDGER = [], ACCEPTING = false;
 let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
@@ -298,7 +298,7 @@ function drawApproach() {
 function updateLocUI() {
   const chip = $('locText');
   if (chip) chip.textContent = LOC.pos ? 'GPS 精準定位 · 誤差 ±' + LOC.pos.acc + ' 公尺'
-    : LOC.err ? LOC.err : LOC.watch != null ? 'GPS 定位中…' : '高雄市全區 · 上線後開始定位';
+    : LOC.err ? LOC.err : LOC.watch != null ? 'GPS 定位中…' : '全台灣 · 上線後開始定位';
   if (!LM || !LOC.pos) return;
   const ll = [LOC.pos.lat, LOC.pos.lng];
   if (!MY_MK) {

@@ -51,13 +51,59 @@
     const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * t) * Math.cos(b[0] * t) * Math.sin(dLo / 2) ** 2;
     return 2 * 6371 * Math.asin(Math.sqrt(h));
   }
+  // ---------- 全台灣：縣市／鄉鎮市區 ----------
+  // 「區域」字串：高雄的區沿用「左營區」（舊資料相容），其他縣市用全名「臺北市大安區」
+  const TW = window.BBC_TW || [];
+  const normTW = s => (s || '').replace(/台/g, '臺');
+  const isKhhDist = a => KHH.some(k => k.d === a);
+  function cityOf(area) {
+    if (!area || isKhhDist(area)) return '高雄市';
+    const n = normTW(area), c = TW.find(x => n.startsWith(x.c));
+    return c ? c.c : '高雄市';
+  }
+  const distOf = area => !area || isKhhDist(area) ? (area || '') : normTW(area).slice(cityOf(area).length);
+  const fullArea = area => !area ? '' : isKhhDist(area) ? '高雄市' + area : normTW(area);
+  const makeArea = (city, dist) => city === '高雄市' ? dist : city + dist;
+  const cityCenter = city => (TW.find(x => x.c === city) || { p: [22.6273, 120.3014] }).p;
   function areaCenter(area) {
-    const a = KHH.find(x => x.d === area) || KHH.find(x => x.d === '三民區');
-    return [a.p[0][1], a.p[0][2]];
+    const a = KHH.find(x => x.d === area);
+    if (a) return [a.p[0][1], a.p[0][2]];
+    if (area && cityOf(area) !== '高雄市') {
+      try { const c = JSON.parse(localStorage.getItem('bbc_ac_' + fullArea(area)) || 'null'); if (c) return c; } catch (e) {}
+      return cityCenter(cityOf(area)).slice();
+    }
+    const d = KHH.find(x => x.d === '三民區'); return [d.p[0][1], d.p[0][2]];
+  }
+  // 其他縣市的區中心：第一次用 Photon 查，之後存在瀏覽器
+  async function areaCenterAsync(area) {
+    if (!area || isKhhDist(area)) return areaCenter(area);
+    const key = 'bbc_ac_' + fullArea(area);
+    try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c) return c; } catch (e) {}
+    try {
+      const cc = cityCenter(cityOf(area));
+      const u = `https://photon.komoot.io/api/?limit=5&lat=${cc[0]}&lon=${cc[1]}&q=` + encodeURIComponent(fullArea(area));
+      const j = await (await fetchTimeout(u, null, 8000)).json();
+      const f = (j.features || []).find(f => /boundary|place/.test((f.properties || {}).osm_key || '')) || (j.features || [])[0];
+      if (f) { const c = [+f.geometry.coordinates[1].toFixed(5), +f.geometry.coordinates[0].toFixed(5)]; try { localStorage.setItem(key, JSON.stringify(c)); } catch (e) {} return c; }
+    } catch (e) {}
+    return areaCenter(area);
+  }
+  // 從地址搜尋結果的欄位找出縣市與區
+  function twAreaFrom(fields, lat, lng) {
+    const vals = fields.filter(Boolean).map(normTW);
+    let city = TW.find(c => vals.some(v => v === c.c || v.startsWith(c.c)));
+    if (!city && inKhh(lat, lng)) city = TW.find(c => c.c === '高雄市');
+    if (!city) { let bd = 1e9; TW.forEach(c => { const d = distKm(c.p, [lat, lng]); if (d < bd) { bd = d; city = c; } }); }
+    if (!city) return areaOf(lat, lng);
+    let dist = city.d.find(d => vals.some(v => v === d || v.endsWith(d)));
+    if (!dist && city.c === '高雄市') return areaOf(lat, lng);
+    if (!dist) return null;
+    return makeArea(city.c, dist);
   }
   // 地址 → 座標：符合地標就用地標，否則用行政區代表點
   function locate(text, area) {
     const s = ALL_SPOTS.find(p => p.n === text) || ALL_SPOTS.find(p => text.includes(p.n));
+    if (area && !isKhhDist(area)) return { d: area, c: areaCenter(area) };   // 其他縣市沒有內建地標
     return s ? { d: s.d, c: s.c } : { d: area, c: areaCenter(area) };
   }
 
@@ -85,6 +131,7 @@
     return best;
   }
   const inKhh = (lat, lng) => lat > 22.43 && lat < 23.48 && lng > 120.15 && lng < 121.05;
+  const inTW = (lat, lng) => lat > 21.8 && lat < 26.45 && lng > 118.1 && lng < 122.1;
 
   // ---------- 地址搜尋（OpenStreetMap 資料，不需金鑰） ----------
   // Photon 適合邊打邊搜；找不到時再用 Nominatim 補一次
@@ -93,32 +140,35 @@
     const hit = fields.find(v => v && KHH.some(k => k.d === v));
     return hit || areaOf(lat, lng);
   }
+  // 全台灣搜尋：以選定的縣市區為中心，打的字沒有縣市名就自動加上
   async function geoSearch(q, area, signal) {
-    const out = [];
-    const query = (area && !q.includes(area) ? area + ' ' : '') + q;
+    const out = [], fa = fullArea(area), nq = normTW(q);
+    const named = TW.some(c => nq.includes(c.c) || nq.includes(c.c.slice(0, 2)));
+    const query = (fa && !named && !nq.includes(distOf(area)) ? fa + ' ' : '') + q;
+    const ctr = areaCenter(area);
     try {
-      const u = 'https://photon.komoot.io/api/?limit=10&lat=22.65&lon=120.32&bbox=120.15,22.43,121.05,23.48&q=' + encodeURIComponent('高雄 ' + query);
+      const u = `https://photon.komoot.io/api/?limit=12&lat=${ctr[0]}&lon=${ctr[1]}&bbox=118.1,21.8,122.1,26.45&q=` + encodeURIComponent(query);
       const j = await (await fetch(u, { signal })).json();
       (j.features || []).forEach(f => {
         const [lng, lat] = f.geometry.coordinates, p = f.properties || {};
-        if (!inKhh(lat, lng)) return;
+        if (!inTW(lat, lng)) return;
         const road = (p.street || '') + houseNo(p.housenumber);
         const name = p.name || road || p.locality || p.district;
         if (!name) return;
-        const a = pickArea([p.district, p.city, p.county, p.locality], lat, lng);
-        out.push({ label: name === road || !road ? name : name, sub: ['高雄市' + a, road && road !== name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
+        const a = twAreaFrom([p.district, p.city, p.county, p.state, p.locality], lat, lng) || area;
+        out.push({ label: name, sub: [fullArea(a), road && road !== name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
       });
     } catch (e) { if (e.name === 'AbortError') throw e; }
     if (!out.length) {
       try {
-        const u = 'https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=tw&accept-language=zh-TW&bounded=1&viewbox=120.15,23.48,121.05,22.43&q=' + encodeURIComponent('高雄市 ' + query);
+        const u = 'https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=tw&accept-language=zh-TW&q=' + encodeURIComponent(query);
         const j = await (await fetch(u, { signal })).json();
         (j || []).forEach(r => {
           const lat = +r.lat, lng = +r.lon, ad = r.address || {};
-          if (!inKhh(lat, lng)) return;
+          if (!inTW(lat, lng)) return;
           const road = (ad.road || '') + houseNo(ad.house_number);
-          const a = pickArea([ad.suburb, ad.city_district, ad.town, ad.district, ad.village], lat, lng);
-          out.push({ label: r.name || road || (r.display_name || '').split(',')[0], sub: ['高雄市' + a, road && road !== r.name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
+          const a = twAreaFrom([ad.suburb, ad.city_district, ad.town, ad.district, ad.village, ad.city, ad.county, ad.state], lat, lng) || area;
+          out.push({ label: r.name || road || (r.display_name || '').split(',')[0], sub: [fullArea(a), road && road !== r.name ? road : ''].filter(Boolean).join(' · '), lat, lng, area: a });
         });
       } catch (e) { if (e.name === 'AbortError') throw e; }
     }
@@ -194,6 +244,15 @@
     }));
     return rankRoads(by);
   }
+  // 其他縣市路名：roads/<縣市代碼>.json（內政部全國路名資料），整個縣市一次下載
+  const CITY_ROADS = {};
+  async function cityRoads(area) {
+    const city = TW.find(c => c.c === cityOf(area)); if (!city) return [];
+    if (!CITY_ROADS[city.k]) CITY_ROADS[city.k] = fetch('roads/' + city.k + '.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).catch(e => { delete CITY_ROADS[city.k]; throw e; });
+    const all = await CITY_ROADS[city.k], names = all[distOf(area)] || [];
+    const rank = n => /大道$|大路$/.test(n) ? 1 : /[一二三四五六七八九十]路$/.test(n) ? 2 : /路$/.test(n) ? 3 : /街$/.test(n) ? 5 : 7;
+    return names.map(n => ({ name: n, lat: null, lng: null, rank: rank(n) })).sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name, 'zh-Hant'));
+  }
   // 內建路名（不用連網，馬上出現）：大路／大道排前面，再來是路、街，其他（巷、地名）排最後
   function staticRoads(area) {
     const names = (window.BBC_KHH_ROADS || {})[area];
@@ -208,13 +267,14 @@
   async function roadCoord(area, name) {
     const key = 'bbc_rc_' + area + name;
     try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c) return c; } catch (e) {}
-    const ctr = areaCenter(area);
+    const ctr = isKhhDist(area) ? areaCenter(area) : await areaCenterAsync(area), dist = distOf(area);
     let best = null;
     try {
-      const u = `https://photon.komoot.io/api/?limit=15&lat=${ctr[0]}&lon=${ctr[1]}&bbox=${ctr[1] - 0.15},${ctr[0] - 0.15},${ctr[1] + 0.15},${ctr[0] + 0.15}&q=` + encodeURIComponent('高雄市' + area + name);
+      const u = `https://photon.komoot.io/api/?limit=15&lat=${ctr[0]}&lon=${ctr[1]}&bbox=${ctr[1] - 0.25},${ctr[0] - 0.25},${ctr[1] + 0.25},${ctr[0] + 0.25}&q=` + encodeURIComponent(fullArea(area) + name);
       const j = await (await fetchTimeout(u, null, 10000)).json();
       const fs = (j.features || []).map(f => ({ lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], p: f.properties || {} }))
-        .filter(f => areaOf(f.lat, f.lng) === area || (f.p.district || '').includes(area));
+        .filter(f => isKhhDist(area) ? (areaOf(f.lat, f.lng) === area || (f.p.district || '').includes(area))
+          : [f.p.district, f.p.city, f.p.locality, f.p.county].some(v => v && normTW(v).includes(dist)));
       best = fs.find(f => f.p.name === name && f.p.osm_key === 'highway') || fs.find(f => f.p.name === name) || fs.find(f => f.p.street === name);
     } catch (e) {}
     if (!best) return { lat: ctr[0], lng: ctr[1], approx: true };
@@ -227,6 +287,7 @@
     opts = opts || {};
     if (!area) return [];
     if (ROADS_MEM[area] && !opts.force) return ROADS_MEM[area];
+    if (!isKhhDist(area)) return (ROADS_MEM[area] = await cityRoads(area));   // 其他縣市：內建路名檔
     if (!opts.force && !opts.online) { const st = staticRoads(area); if (st) return (ROADS_MEM[area] = st); }
     const save = (list, full) => {
       try { localStorage.setItem('bbc_roads_' + area, JSON.stringify({ t: Date.now(), list, full })); } catch (e) {}
@@ -304,9 +365,18 @@
       return p.name && road ? p.name + '（' + road + '）' : (p.name || road || '');
     } catch (e) { return ''; }
   }
+  // 座標 → 縣市區（地圖選點用）
+  async function reverseArea(lat, lng) {
+    if (inKhh(lat, lng)) return areaOf(lat, lng);
+    try {
+      const j = await (await fetchTimeout('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng, null, 8000)).json();
+      const p = ((j.features || [])[0] || {}).properties || {};
+      return twAreaFrom([p.district, p.city, p.county, p.state, p.locality], lat, lng);
+    } catch (e) { return null; }
+  }
   // 導航連結（Google 地圖，iPhone 有裝 App 會直接開 App）
   function navUrl(lat, lng, text, area) {
-    const dest = lat != null ? lat + ',' + lng : encodeURIComponent('高雄市' + (area || '') + (text || ''));
+    const dest = lat != null ? lat + ',' + lng : encodeURIComponent((fullArea(area) || '高雄市') + (text || ''));
     return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + dest;
   }
   const fromCoord = r => r && r.fromLat != null ? [r.fromLat, r.fromLng] : null;
@@ -627,9 +697,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.05-01',
+    VERSION: '2026.11.05-02',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
