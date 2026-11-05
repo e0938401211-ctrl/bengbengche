@@ -444,7 +444,7 @@ function renderRides() {
         <button class="sbtn" type="button" data-msg="${esc(r.driverPhone)}" data-msgride="${esc(r.id)}">傳訊息給司機${(d => d && unreadOf(d, r.id) ? '（' + unreadOf(d, r.id) + '）' : '')(DRIVERS.find(x => x.id === r.driverPhone))}</button>
         <button class="sbtn danger" type="button" data-cancel="${esc(r.id)}" style="margin-left:auto">取消行程</button>`;
     } else if (r.status === 'done') {
-      act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(Math.round(r.finalMin || 0))} 分鐘 · ${r.distanceSource === 'gps' ? 'GPS 實際里程' : '估算里程'}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
+      act = `<span class="t">完成 ${BBC.hhmm(r.doneAt)} · ${esc(Math.round(r.finalMin || 0))} 分鐘 · ${r.distanceSource === 'gps-road' ? 'GPS＋道路校正里程' : r.distanceSource === 'gps' ? 'GPS 實際里程' : '估算里程'}${r.source === 'driver' ? ' · 司機手動建立' : ''}</span>
         <button class="sbtn" type="button" data-route="${esc(r.id)}" style="margin-left:auto">路線與明細</button>`;
     } else {
       act = `<span class="t">取消於 ${BBC.hhmm(r.cancelledAt)}</span>`;
@@ -649,7 +649,7 @@ function routeDialog(id) {
       ${L('上車', esc((r.fromArea || '') + ' ' + r.from))}
       ${L('下車', esc(BBC.toText(r)))}
       ${L('時間', BBC.hhmm(r.startedAt) + ' → ' + (done ? BBC.hhmm(r.doneAt) : '進行中'))}
-      ${L('里程', '<span id="mKmVal">' + esc(km != null ? km : 0) + ' 公里</span>（' + (r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
+      ${L('里程', '<span id="mKmVal">' + esc(km != null ? km : 0) + ' 公里</span>（' + (r.distanceSource === 'gps-road' ? 'GPS＋道路校正' : r.distanceSource === 'gps' || (r.track || []).length > 1 ? 'GPS' : '估算') + '）')}
       ${done ? L('車資明細', `起跳 ${fmt(r.fareBase)} ＋ 里程 ${fmt(r.fareKm)} ＋ 時間 ${fmt(r.fareTime)}${r.minFareTopUp ? ' ＋ 低消補足 ' + fmt(r.minFareTopUp) : ''}`) : ''}
       ${L(done ? '實收車資' : '目前跳表', '<span id="mFareVal">NT$' + fmt(fare) + '</span>')}
     </div>

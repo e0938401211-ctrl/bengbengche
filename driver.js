@@ -336,8 +336,20 @@ function onPos(p) {
     const hrs = GEO.lastT ? (p.timestamp - GEO.lastT) / 3600000 : 0;
     if (hrs > 0 && d / hrs > 160) return;                      // 時速超過 160 是飄點
     GEO.km += d;
+    // 兩點相隔很遠（例如螢幕關掉、訊號中斷後回來）：直線會少算，改用道路距離補上
+    if (d > 0.12 && hrs * 3600 > 12) fillGap(last, pt, d);
   }
   GEO.track.push(pt); GEO.lastT = p.timestamp; GEO.ok = true; GEO.err = '';
+}
+function fillGap(a, b, straight) {
+  const rid = GEO.rideId;
+  BBC.drivingRoute(a, b).then(rt => {
+    if (GEO.rideId !== rid || !GEO.rec) return;
+    if (!(rt.km > straight && rt.km < straight * 3 + 0.3)) return;   // 繞太遠的不採用
+    GEO.km += rt.km - straight; GEO.filled = (GEO.filled || 0) + (rt.km - straight);
+    const i = GEO.track.indexOf(b);
+    if (i > 0) GEO.track.splice(i, 0, ...rt.coords.slice(1, -1).map(c => [r5(c[0]), r5(c[1])]));
+  }).catch(() => {});
 }
 function stopGPS() {
   GEO.rec = false;
@@ -444,10 +456,22 @@ const A = {
     db.set('rides', CUR.id, { status: 'trip', startedAt: now, meterFare: BBC.RATE.base }).catch(fail);
     startMeter(); render();
   },
-  complete() {
-    if (!CUR) return;
+  async complete() {
+    if (!CUR || FINISHING) return;
+    FINISHING = true;
+    const r0 = CUR;
     stopMeter(); stopGPS(); closeChat();
-    const rec = buildRecord(CUR, M.km, M.min);
+    // 結束時把整段 GPS 路線貼到道路上，算出精準公里數（最多等 8 秒，失敗就用 GPS 里程）
+    let km = M.km, match = null;
+    if (usingGps() && GEO.rideId === r0.id) {
+      const b = document.querySelector('[data-a=complete]'); if (b) { b.disabled = true; b.textContent = '正在依道路計算精準里程…'; }
+      try { match = await Promise.race([BBC.matchTrack(GEO.track), new Promise(r => setTimeout(r, 8000))]); } catch (e) {}
+      if (match && match.km > GEO.km * 0.85 && match.km < GEO.km * 1.6 + 1) { km = match.km; M.km = km; } else match = null;
+    }
+    FINISHING = false;
+    if (!CUR || CUR.id !== r0.id) return;
+    const rec = buildRecord(CUR, km, M.min);
+    if (match) { rec.matchedKm = Math.round(match.km * 100) / 100; rec.distanceSource = 'gps-road'; rec.track = BBC.thinTrack(match.line, 1500); }
     const rate = BBC.rideRate(CUR);
     rec.commissionFee = rate != null ? BBC.commissionOf(rec.finalFare, rate) : 0;
     Object.assign(CUR, rec);
@@ -463,13 +487,14 @@ const A = {
   chat() { openChat(); },
 
 };
+let FINISHING = false;
 const meterAmount = () => meterFare();
 function statText() {
   if (!CUR || !CUR.mins) return '依乘客指示行駛';
   return M.min >= CUR.mins ? '已到預估時間' : '剩約 ' + Math.max(1, Math.ceil(CUR.mins - M.min)) + ' 分鐘';
 }
 function srcText() {
-  if (usingGps()) return 'GPS 記錄中 · 已記錄 ' + GEO.track.length + ' 個點';
+  if (usingGps()) return 'GPS 記錄中 · 已記錄 ' + GEO.track.length + ' 個點' + (GEO.filled ? ' · 已補上中斷路段 ' + GEO.filled.toFixed(1) + ' 公里' : '') + ' · 請保持畫面開著';
   return GEO.err || '等待 GPS 訊號…（請保持螢幕亮著）';
 }
 
@@ -554,7 +579,7 @@ function receiptHTML(r, mapId) {
     ${L('開始跳表', dt(r.startedAt))}
     ${L('結束', dt(r.doneAt))}
     ${L('里程／時間', esc(km) + ' 公里 · ' + esc(Math.round(min)) + ' 分鐘')}
-    ${L('里程來源', r.distanceSource === 'gps' ? 'GPS 實際行駛' : '依路線估算')}
+    ${L('里程來源', r.distanceSource === 'gps-road' ? 'GPS 路線依道路校正（精準）' : r.distanceSource === 'gps' ? 'GPS 實際行駛' : '依路線估算')}
     ${L('起跳', 'NT$' + fmt(base))}
     ${L('里程費（每公里 ' + BBC.RATE.perKm + '）', 'NT$' + fmt(kmFee))}
     ${L('時間費（每分鐘 ' + BBC.RATE.perMin + '）', 'NT$' + fmt(tFee))}

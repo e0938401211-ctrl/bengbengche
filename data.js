@@ -271,6 +271,31 @@
     throw lastErr || new Error('route');
   }
 
+  // 把 GPS 軌跡「貼到道路上」算出實際行駛公里（OSRM map matching）：可修正 GPS 飄移、補上訊號中斷的路段
+  async function matchTrack(track) {
+    if (!track || track.length < 2) return null;
+    // 依距離平均取樣，最多 90 個點
+    let total = 0; for (let i = 1; i < track.length; i++) total += distKm(track[i - 1], track[i]);
+    const gap = Math.max(0.03, total / 88), pts = [track[0]]; let acc = 0;
+    for (let i = 1; i < track.length - 1; i++) { acc += distKm(track[i - 1], track[i]); if (acc >= gap) { pts.push(track[i]); acc = 0; } }
+    pts.push(track[track.length - 1]);
+    if (pts.length < 2) return null;
+    const coords = pts.map(p => p[1] + ',' + p[0]).join(';'), rad = pts.map(() => 30).join(';');
+    let lastErr;
+    for (const base of OSRM) {
+      try {
+        const u = base.replace('/route/', '/match/') + coords + '?overview=full&geometries=geojson&gaps=ignore&tidy=true&radiuses=' + rad;
+        const j = await (await fetchTimeout(u, null, 9000)).json();
+        if (!j || j.code !== 'Ok' || !(j.matchings || []).length) throw new Error(j && j.code || 'no match');
+        const km = j.matchings.reduce((t, m) => t + m.distance, 0) / 1000;
+        const line = [].concat(...j.matchings.map(m => m.geometry.coordinates.map(c => [+c[1].toFixed(5), +c[0].toFixed(5)])));
+        const conf = j.matchings.reduce((t, m) => t + (m.confidence || 0), 0) / j.matchings.length;
+        return { km, line, conf, rawKm: total };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('match');
+  }
+
   async function geoReverse(lat, lng) {
     try {
       const j = await (await fetch('https://photon.komoot.io/reverse?lat=' + lat + '&lon=' + lng)).json();
@@ -602,9 +627,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.04-03',
+    VERSION: '2026.11.05-01',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, locate, toText, hasDest, areaOf, geoSearch, geoReverse, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
