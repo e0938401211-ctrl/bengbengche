@@ -281,6 +281,7 @@ function updateApproach() {
     if (APP.rideId !== id) return;
     APP.data = d; drawApproach(); setEtaText();
     if (S.status === 'pickup') { const k = $('etaLine2'); if (!k) render(); }
+    if (S.grab && !S.bid) { $('sheet').dataset.s = ''; render(); }   // 搶單：路線算好後標出建議分鐘
   });
 }
 function drawApproach() {
@@ -679,7 +680,8 @@ function sheetHTML() {
         ? `<div class="whyno"><p style="font-weight:700">你選了 ${S.bid} 分鐘，等其他司機選完…</p><p class="dim" style="font-size:14px">分鐘最少的人接這張單；一樣快就看誰先按。${(r.bids || []).length} / ${(r.offerTo || []).length} 人已選</p></div>`
         : S.grab
         ? `<div class="whyno"><p style="font-weight:700">你幾分鐘可以到上車點？選最少分鐘的人接這張單</p>
-          <div class="grabgrid"><button data-a="grab5">5 分鐘</button><button data-a="grab10">10 分鐘</button><button data-a="grab15">15 分鐘</button></div>
+          <div class="grabgrid">${Array.from({ length: 15 }, (_, i) => i + 1).map(m => `<button data-grab="${m}"${APP.data && !APP.data.rough && m === Math.min(15, APP.data.min) ? ' class="sug"' : ''}>${m}<small>分</small></button>`).join('')}</div>
+          ${APP.data ? `<p class="dim" style="font-size:13px">路線估計約 ${APP.data.min} 分鐘${APP.data.rough ? '（直線估算）' : '，已標出建議'}</p>` : ''}
           <button class="nobtn" style="align-self:stretch;justify-content:center;height:46px" data-a="pass">${ICON_X}<span>不搶</span></button></div>`
         : S.declining
         ? `<div class="whyno"><p style="font-weight:700">選一個，這張單就會退回管理平台</p>
@@ -935,6 +937,7 @@ document.addEventListener('click', e => {
   const tr = e.target.closest('[data-trip]'); if (tr) return openTrip(tr.dataset.trip);
   const hf = e.target.closest('[data-hf]'); if (hf) { HF = hf.dataset.hf; return render(); }
   if (e.target.closest('#tdClose') || e.target.id === 'tripDetail') { $('tripDetail').hidden = true; return; }
+  const g = e.target.closest('[data-grab]'); if (g) return A.grab(+g.dataset.grab);
   const b = e.target.closest('[data-a]'); if (b) return A[b.dataset.a]();
   const q = e.target.closest('[data-q]'); if (q) return sendMsg(q.dataset.q);
   if (e.target.closest('#myLocBtn')) return recenter();
