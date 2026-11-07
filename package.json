@@ -1,0 +1,6 @@
+{
+  "name": "bengbengche-build",
+  "private": true,
+  "version": "1.0.0",
+  "devDependencies": { "javascript-obfuscator": "4.1.1" }
+}
