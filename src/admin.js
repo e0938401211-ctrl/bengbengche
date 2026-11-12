@@ -103,12 +103,42 @@ const freshLoc = d => d.lat != null && d.lng != null && Date.now() - (d.locAt ||
 const driverKm = (d, p) => freshLoc(d) ? BBC.distKm([d.lat, d.lng], p) : null;
 // 派單範圍：司機開到上車點的大約分鐘數要在設定內（預設 15 分鐘）；沒有 GPS 位置的司機無法判斷，不派
 const limitMin = () => SETTINGS.dispatchMin || BBC.DEFAULT_DISPATCH_MIN;
-const driverEta = (d, p) => { const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.etaMin(km); };
+// 真實道路距離/時間（90 秒內查過就有，否則回 null 用直線估算）
+const driverRoute = (d, p) => (freshLoc(d) && p) ? BBC.roadMatrixCached([d.lat, d.lng], p) : null;
+const driverEta = (d, p) => { const r = driverRoute(d, p); if (r) return r.min; const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.etaMin(km); };
 const grabKm = () => limitKm() || BBC.GRAB_KM;   // 搶單範圍：有設公里就用設定，沒設用 5 公里
 const limitKm = () => SETTINGS.dispatchKm > 0 ? SETTINGS.dispatchKm : 0;   // 0 = 不限公里
 const rangeLabel = () => limitMin() + ' 分鐘' + (limitKm() ? '、' + limitKm() + ' 公里' : '') + '車程內';
-const driverRoadKm = (d, p) => { const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.roadKm(km); };
+const driverRoadKm = (d, p) => { const r = driverRoute(d, p); if (r) return r.km; const km = p ? driverKm(d, p) : null; return km == null ? null : BBC.roadKm(km); };
 const inRange = (d, p) => !rangeText(d, p) && driverEta(d, p) != null;
+// 背景把「附近司機 → 上車點」的真實道路距離查回來（一次查多位，查到後重新整理下拉選單）
+let RT_SEQ = 0, RT_INFLIGHT = '';
+async function refreshEtas(p) {
+  if (!p) return;
+  const key = p[0].toFixed(4) + ',' + p[1].toFixed(4);
+  const cands = available([]).filter(freshLoc).map(d => ({ d, km: BBC.distKm([d.lat, d.lng], p) })).sort((a, b) => a.km - b.km).slice(0, 25);
+  if (!cands.some(x => !BBC.roadMatrixCached([x.d.lat, x.d.lng], p))) return;   // 全部都有快取了
+  if (RT_INFLIGHT === key) return;                                             // 同一上車點已在查
+  RT_INFLIGHT = key;
+  const seq = ++RT_SEQ;
+  const res = await BBC.roadMatrix(cands.map(x => [x.d.lat, x.d.lng]), p);
+  RT_INFLIGHT = '';
+  if (seq !== RT_SEQ) return;
+  if (res.some(Boolean) && $('d-driver')) { const keep = $('d-driver').dataset.touched ? $('d-driver').value : '__auto'; $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value, pickCoord('from')); if ([...$('d-driver').options].some(o => o.value === keep)) $('d-driver').value = keep; }
+}
+// 整趟（上車→下車）真實路線預估，查到後更新預估框
+const TRIP_CACHE = {};
+let TRIP_SEQ = 0;
+const tripKey = (a, b) => a[0].toFixed(4) + ',' + a[1].toFixed(4) + '|' + b[0].toFixed(4) + ',' + b[1].toFixed(4);
+async function refineTrip() {
+  const a = pickCoord('from'), b = pickCoord('to'); if (!a || !b) return;
+  if (TRIP_CACHE[tripKey(a, b)]) return;
+  const seq = ++TRIP_SEQ;
+  const r = await BBC.routeTrip(a, b);
+  if (!r || seq !== TRIP_SEQ) return;
+  TRIP_CACHE[tripKey(a, b)] = { km: r.km, mins: r.min, fare: Math.max(BBC.RATE.min, Math.round(BBC.meterAmount(r.km, r.min) / 5) * 5) };
+  updateEstimate();
+}
 function rangeText(d, p) {
   const m = driverEta(d, p);
   if (m == null) return freshLoc(d) ? '' : '未定位，無法判斷距離';
@@ -127,10 +157,11 @@ function driverOptions(sel, exclude, withAuto, fromText, fromArea, coords, needA
   const need = needArg != null ? needArg : curNeed();
   const list = available(exclude);
   const p = coords || (fromText ? BBC.locate(fromText, fromArea).c : null);
-  const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => (a.km ?? 9999) - (b.km ?? 9999));
+  if (p) refreshEtas(p);   // 背景查真實道路距離，查到後會自動重新整理顯示
+  const rows = list.map(d => ({ d, km: p ? driverKm(d, p) : null })).sort((a, b) => ((driverRoadKm(a.d, p) ?? a.km) ?? 9999) - ((driverRoadKm(b.d, p) ?? b.km) ?? 9999));
   let html = withAuto ? `<option value="__auto">自動派給最近的司機（${rangeLabel()}）</option><option value="__grab">搶單：同時通知 ${grabKm()} 公里內的司機，選最少分鐘的人接</option><option value="">稍後指派（先放到待派單）</option>` : '<option value="">選擇司機…</option>';
   html += rows.length
-    ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點約 ' + BBC.roadKm(km) + ' 公里車程、' + BBC.etaMin(km) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超出派單範圍，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
+    ? rows.map(({ d, km }) => { const far = p ? rangeText(d, p) : ''; return `<option value="${esc(d.id)}"${sel === d.id && !far ? ' selected' : ''}${far ? ' disabled' : ''}>${esc(d.name)} · ${esc(d.plate || '')}${km != null ? ' · 距上車點' + (driverRoute(d, p) ? '' : '約') + ' ' + driverRoadKm(d, p) + ' 公里車程、' + driverEta(d, p) + ' 分鐘' : ''}${far && km == null ? ' · ' + far : ''}${far && km != null ? '（超出派單範圍，不能派）' : ''} · ${fmt(d.balance || 0)} 點${enoughPoints(d, need) ? '' : '（點數不足）'}</option>`; }).join('')
     : '<option value="" disabled>目前沒有線上空車的司機</option>';
   return html;
 }
@@ -324,8 +355,13 @@ function currentEstimate() {
 }
 function updateEstimate() {
   const e = currentEstimate();
+  const a = pickCoord('from'), b = pickCoord('to');
+  const tp = (a && b) ? TRIP_CACHE[tripKey(a, b)] : null;   // 真實路線結果（有的話）
+  if (a && b && !tp) refineTrip();                          // 還沒算過就背景算
   $('estBox').innerHTML = e
-    ? (e.estFare == null ? `<span>未填下車地點：依跳表計費</span><span>起跳 <b>NT$${BBC.RATE.base}</b></span>` : `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`)
+    ? (e.estFare == null ? `<span>未填下車地點：依跳表計費</span><span>起跳 <b>NT$${BBC.RATE.base}</b></span>`
+      : tp ? `<span>實際路線 ${tp.km} 公里 · ${tp.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(tp.fare)}</b></span>`
+      : `<span>預估 ${e.km} 公里 · ${e.mins} 分鐘</span><span>預估車資 <b>NT$${fmt(e.estFare)}</b></span>`)
     : '<span>填好上車地址後會顯示預估（下車地點可不填）</span>';
   const keep = $('d-driver').dataset.touched ? $('d-driver').value : '__auto';   // 預設：自動派給最近的司機
   $('d-driver').innerHTML = driverOptions(keep, [], true, $('d-from').value.trim(), $('d-from-area').value, pickCoord('from'));

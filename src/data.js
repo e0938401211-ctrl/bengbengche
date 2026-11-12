@@ -332,6 +332,47 @@
     throw lastErr || new Error('route');
   }
 
+  // 一次算「多位司機 → 上車點」的真實道路距離與時間（OSRM table 服務，一個請求搞定，不會因司機多而變慢）
+  const RMTABLE = ['https://router.project-osrm.org/table/v1/driving/', 'https://routing.openstreetmap.de/routed-car/table/v1/driving/'];
+  const RM_CACHE = new Map();   // key: 司機座標|上車點座標（四位小數），value: { km, min, t }
+  const rmKey = (o, d) => o[0].toFixed(4) + ',' + o[1].toFixed(4) + '|' + d[0].toFixed(4) + ',' + d[1].toFixed(4);
+  function roadMatrixCached(origin, dest) {
+    const c = RM_CACHE.get(rmKey(origin, dest));
+    return c && Date.now() - c.t < 90000 ? c : null;   // 90 秒內的結果直接用
+  }
+  // origins: [[lat,lng]...]（最多 25 個），dest: [lat,lng]；回傳對應每個 origin 的 { km, min } 或 null
+  async function roadMatrix(origins, dest) {
+    if (!origins.length) return [];
+    const out = new Array(origins.length).fill(null);
+    const todo = [];                                   // 沒有快取、需要查的
+    origins.forEach((o, i) => { const c = roadMatrixCached(o, dest); if (c) out[i] = { km: c.km, min: c.min }; else todo.push(i); });
+    if (!todo.length) return out;
+    const pts = todo.slice(0, 25).map(i => origins[i]).concat([dest]);
+    const coordStr = pts.map(p => p[1] + ',' + p[0]).join(';');
+    const n = pts.length - 1;
+    const sources = Array.from({ length: n }, (_, i) => i).join(';');
+    for (const base of RMTABLE) {
+      try {
+        const u = base + coordStr + '?sources=' + sources + '&destinations=' + n + '&annotations=distance,duration';
+        const j = await (await fetchTimeout(u, null, 9000)).json();
+        if (j.code !== 'Ok' || !j.distances || !j.durations) throw new Error(j.code || 'table');
+        todo.slice(0, 25).forEach((origIdx, k) => {
+          const dist = j.distances[k] && j.distances[k][0], dur = j.durations[k] && j.durations[k][0];
+          if (dist == null || dur == null) return;
+          const v = { km: Math.round(dist / 100) / 10, min: Math.max(1, Math.round(dur / 60)), t: Date.now() };
+          RM_CACHE.set(rmKey(origins[origIdx], dest), v);
+          out[origIdx] = { km: v.km, min: v.min };
+        });
+        return out;
+      } catch (e) { /* 換下一個伺服器 */ }
+    }
+    return out;   // 查不到就維持 null，由呼叫端用估算值
+  }
+  // 整趟（上車→下車）的真實道路距離與時間；查不到回傳 null，由呼叫端用估算值
+  async function routeTrip(fromC, toC) {
+    try { const r = await drivingRoute(fromC, toC); return { km: Math.round(r.km * 10) / 10, min: r.min }; } catch (e) { return null; }
+  }
+
   // 把 GPS 軌跡「貼到道路上」算出實際行駛公里（OSRM map matching）：可修正 GPS 飄移、補上訊號中斷的路段
   async function matchTrack(track) {
     if (!track || track.length < 2) return null;
@@ -734,9 +775,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.05-05',
+    VERSION: '2026.11.13-01',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, roadMatrix, roadMatrixCached, routeTrip, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,
