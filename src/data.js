@@ -369,6 +369,14 @@
     return out;   // 查不到就維持 null，由呼叫端用估算值
   }
   // 整趟（上車→下車）的真實道路距離與時間；查不到回傳 null，由呼叫端用估算值
+  // 手機推播：請 Expo/Apple 推播服務通知司機（背景、鎖屏也會響）。tokens 是司機存的推播代碼陣列。
+  async function sendPush(tokens, title, body, data) {
+    tokens = (tokens || []).filter(t => typeof t === 'string' && t.indexOf('ExponentPushToken') === 0);
+    if (!tokens.length) return;
+    const msgs = tokens.map(to => ({ to, title, body, sound: 'default', priority: 'high', channelId: 'rides', data: data || {} }));
+    try { await fetchTimeout('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(msgs) }, 8000); } catch (e) { console.warn('push', e); }
+  }
+
   async function routeTrip(fromC, toC) {
     try { const r = await drivingRoute(fromC, toC); return { km: Math.round(r.km * 10) / 10, min: r.min }; } catch (e) { return null; }
   }
@@ -775,9 +783,9 @@
   }
 
   window.BBC = {
-    VERSION: '2026.11.13-01',
+    VERSION: '2026.11.13-02',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, roadMatrix, roadMatrixCached, routeTrip, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, roadMatrix, roadMatrixCached, routeTrip, sendPush, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,

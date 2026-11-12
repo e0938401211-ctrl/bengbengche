@@ -7,6 +7,7 @@ const DEFAULT_ADMIN = { user: 'admin', pw: '123456' };
 const ACTIVE = ['pending', 'offering', 'assigned', 'pickup', 'trip'];
 
 let PENDING_SEEN = null, RIDES_ST = null, RIDES_SEEN = null, MSG_SEEN_A = {}, MSG_OPEN = null, MSG_RIDE = '';
+let PUSH_SENT = {}, PUSH_INIT = false;
 let ADMIN = null, RIDES = [], DRIVERS = [], JUNK = [], LEDGER = [], SETTINGS = { commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN, dispatchKm: 0 };
 let feeTouched = false, ledgerFilter = '';
 let rideFilter = 'active', driverFilter = 'all';
@@ -69,6 +70,7 @@ function enter(a) {
     if (RIDES_ST) l.forEach(r => { const o = RIDES_ST[r.id]; if (o === 'offering' && r.status === 'pickup' && r.grabbed) toast(`🏁 ${r.driverName} 選 ${r.promisedMin} 分鐘最快，接下行程 ${r.id}（${(r.bids || []).map(b => b.name + ' ' + b.min + ' 分').join('、')}）`); });
     RIDES_ST = {}; l.forEach(r => { RIDES_ST[r.id] = r.status; });
     RIDES_SEEN = {}; l.forEach(r => { RIDES_SEEN[r.id] = (r.declines || []).length; });
+    maybePush(l);
     RIDES = l; renderAll();
   }));
   unsub.push(db.watch('drivers', l => {
@@ -683,6 +685,27 @@ function deleteDriverDialog(id) {
     <p class="sub">${busy ? '這位司機還有進行中的行程，請先取消或等行程結束。' : '刪除後司機 App 會立刻登出，這個手機號碼可以重新註冊。過去的行程紀錄會保留。'}</p>
     <div class="mrow"><button class="sbtn" type="button" data-close>取消</button>${busy ? '' : '<button class="btn red" type="button" id="mOk">刪除帳號</button>'}</div>`);
   if (!busy) $('mOk').onclick = async () => { try { await db.remove('drivers', id); closeModal(); toast('帳號已刪除'); } catch (x) { fail(x); } };
+}
+function pushToDriver(phone, title, body, rideId) {
+  const d = DRIVERS.find(x => x.id === phone);
+  if (d && d.pushToken) BBC.sendPush([d.pushToken], title, body, { rideId: rideId });
+}
+function maybePush(list) {
+  if (!ADMIN) return;
+  if (!PUSH_INIT) {
+    list.forEach(r => { if (r.status === 'assigned' && r.driverPhone && r.assignedAt) PUSH_SENT['a:' + r.id + ':' + r.driverPhone + ':' + r.assignedAt] = 1; if (r.status === 'offering' && r.offerAt) PUSH_SENT['o:' + r.id + ':' + r.offerAt] = 1; });
+    PUSH_INIT = true; return;
+  }
+  list.forEach(r => {
+    const where = (r.fromArea || '') + ' ' + (r.from || '');
+    if (r.status === 'assigned' && r.driverPhone && r.assignedAt) {
+      const k = 'a:' + r.id + ':' + r.driverPhone + ':' + r.assignedAt;
+      if (!PUSH_SENT[k]) { PUSH_SENT[k] = 1; pushToDriver(r.driverPhone, '\ud83d\ude95 新的派單', where + '（請在時限內接單）', r.id); }
+    } else if (r.status === 'offering' && r.offerAt) {
+      const k = 'o:' + r.id + ':' + r.offerAt;
+      if (!PUSH_SENT[k]) { PUSH_SENT[k] = 1; (r.offerTo || []).forEach(ph => pushToDriver(ph, '\ud83c\udfc1 有單可以搶', where + '（選最少分鐘的人接）', r.id)); }
+    }
+  });
 }
 // 核准自己註冊的司機（核准前不能上線、不會被派單）
 async function approveDriver(id) {

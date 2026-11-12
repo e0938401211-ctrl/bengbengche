@@ -848,6 +848,8 @@ function enter(d) {
     if (me.active === false) { local.del('session'); return showAuth('帳號已被管理員停用，請聯絡管理員'); }
     const wasPending = ME.approved === false;
     ME = withPhone(me);
+    if (PENDING_PUSH_TOKEN) savePushToken(PENDING_PUSH_TOKEN);
+    else if (window.__bbcPushToken && me.pushToken !== window.__bbcPushToken) savePushToken(window.__bbcPushToken);
     if (wasPending && me.approved !== false) { toast('管理員已核准你的帳號，可以上線接單了！'); speak('帳號已核准'); render(); }
     onMsgs();
   });
@@ -927,6 +929,16 @@ const QUICK = ['已到上車點，乘客還沒出現', '乘客聯絡不上', '�
 const thread = () => CUR && ['request', 'pickup', 'trip', 'done'].includes(S.status) && !S.grab ? CUR.id : '';
 const myMsgs = () => ((ME && ME.msgs) || []).filter(m => (m.r || '') === thread());
 const unreadAdmin = () => myMsgs().filter(m => m.f === 'a' && m.at > ((ME && ME.readD) || 0)).length;
+let PENDING_PUSH_TOKEN = null;
+function savePushToken(tok) {
+  if (!tok || typeof tok !== 'string') return;
+  if (!ME) { PENDING_PUSH_TOKEN = tok; return; }
+  if (ME.pushToken === tok) return;
+  ME.pushToken = tok; db.set('drivers', ME.phone, { pushToken: tok }).catch(() => {});
+}
+window.__bbcSetPushToken = savePushToken;
+try { if (window.__bbcPushToken) savePushToken(window.__bbcPushToken); } catch (e) {}
+
 function speak(text) {
   if (!VOICE) return;
   try { const u = new SpeechSynthesisUtterance(text); u.lang = 'zh-TW'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (err) {}
