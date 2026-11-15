@@ -84,7 +84,7 @@ function enter(a) {
   }));
   setTimeout(() => { loadRoads($('d-from-area').value); loadRoads($('d-to-area').value); }, 800);   // 先在背景載好預設區的道路
   unsub.push(db.watch('ledger', l => { LEDGER = l; $('rulesBanner').hidden = true; renderWallet(); }));
-  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE, dispatchMin: m.dispatchMin > 0 ? m.dispatchMin : BBC.DEFAULT_DISPATCH_MIN, dispatchKm: m.dispatchKm > 0 ? m.dispatchKm : 0 }); applyFeeDefault(); renderWallet(); updateEstimate(); renderRides(); }));
+  unsub.push(db.watch('settings', l => { const m = l.find(x => x.id === 'main'); if (m) { SETTINGS = Object.assign({ commissionRate: BBC.DEFAULT_RATE, dispatchMin: BBC.DEFAULT_DISPATCH_MIN }, m, { commissionRate: m.commissionRate != null ? m.commissionRate : BBC.DEFAULT_RATE, dispatchMin: m.dispatchMin > 0 ? m.dispatchMin : BBC.DEFAULT_DISPATCH_MIN, dispatchKm: m.dispatchKm > 0 ? m.dispatchKm : 0, traffic: m.traffic >= 1 && m.traffic <= 3 ? m.traffic : 1.4 }); window.BBC_TRAFFIC = SETTINGS.traffic; } applyFeeDefault(); renderWallet(); updateEstimate(); renderRides(); }));
   unsub.push(db.watch('admins', l => { const me = l.find(x => x.id === ADMIN.id); if (me) { ADMIN = me; $('defaultPwBanner').hidden = !me.isDefaultPw; } }));
   renderAll();
 }
@@ -832,16 +832,19 @@ function applyFeeDefault() {
   if (document.activeElement !== $('s-fee')) $('s-fee').value = SETTINGS.commissionRate;
   if ($('s-range') && document.activeElement !== $('s-range')) $('s-range').value = limitMin();
   if ($('s-km') && document.activeElement !== $('s-km')) $('s-km').value = limitKm() || '';
+  if ($('s-traffic') && document.activeElement !== $('s-traffic')) $('s-traffic').value = SETTINGS.traffic || 1.4;
   $('feeHint').textContent = '預設每 100 元回 ' + SETTINGS.commissionRate + ' 點，行程結束才扣';
 }
 $('d-fee').addEventListener('input', () => { feeTouched = true; updateEstimate(); });
 $('feeForm').addEventListener('submit', async e => {
   e.preventDefault();
   const v = parseInt($('s-fee').value, 10), m = parseInt($('s-range').value, 10), kt = $('s-km').value.trim(), k = kt ? parseFloat(kt) : 0;
+  const tt = $('s-traffic') ? $('s-traffic').value.trim() : '', tf = tt ? parseFloat(tt) : 1.4;
   if (!(k >= 0 && k <= 100)) return $('feeSaved').textContent = '公里範圍請輸入 0–100（留空 = 不限）';
   if (!(v >= 0)) return $('feeSaved').textContent = '回金請輸入 0 以上的整數';
   if (!(m >= 1 && m <= 120)) return $('feeSaved').textContent = '派單範圍請輸入 1–120 分鐘';
-  try { await db.set('settings', 'main', { commissionRate: v, dispatchMin: m, dispatchKm: k, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = `已儲存：每 100 元車資回 ${v} 點；只派給 ${m} 分鐘${k ? '、' + k + ' 公里' : ''}車程內的司機`; } catch (x) { fail(x); }
+  if (!(tf >= 1 && tf <= 3)) return $('feeSaved').textContent = '時間估計係數請輸入 1～3 之間';
+  try { await db.set('settings', 'main', { commissionRate: v, dispatchMin: m, dispatchKm: k, traffic: tf, updatedAt: Date.now(), updatedBy: ADMIN.id }); $('feeSaved').textContent = `已儲存：每 100 元車資回 ${v} 點；只派給 ${m} 分鐘${k ? '、' + k + ' 公里' : ''}車程內的司機；時間估計係數 ${tf}`; } catch (x) { fail(x); }
 });
 function renderWallet() {
   if (!ADMIN || !$('walletRows')) return;

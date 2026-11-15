@@ -57,7 +57,7 @@ let RIDES = [], ALL_DRIVERS = [];         // 所有行程（即時）
 let CUR = null;         // 正在處理的行程
 let S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };  // status: offline | searching | request | pickup | trip | done
 const AREA = '全台灣';   // 司機不分區，服務範圍為全台灣
-let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null, unsubL = null;
+let countT = null, meterT = null, beatT = null, unsubR = null, unsubD = null, unsubL = null, unsubS = null;
 let LEDGER = [], ACCEPTING = false;
 let M = { rideId: null, min: 0, km: 0, lastPush: 0, lastTrack: 0 };
 let SYNC_ERR_SHOWN = false;
@@ -826,7 +826,7 @@ function seg(mode) {
 }
 function showAuth(msg) {
   stopCountdown(); stopMeter(); clearInterval(beatT); GEO.rec = false; stopLocate();
-  if (unsubR) unsubR(); if (unsubD) unsubD(); if (unsubL) unsubL(); unsubR = unsubD = unsubL = null; LEDGER = [];
+  if (unsubR) unsubR(); if (unsubD) unsubD(); if (unsubL) unsubL(); if (unsubS) unsubS(); unsubR = unsubD = unsubL = unsubS = null; LEDGER = [];
   ME = null; CUR = null; ONLINE = false; MSG_SEEN = null; S = { tab: 'home', status: 'offline', left: SECS, unread: 0 };
   $('profile').hidden = true; $('auth').hidden = false;
   seg('login');
@@ -854,6 +854,7 @@ function enter(d) {
     onMsgs();
   });
   unsubR = db.watch('rides', onRides);
+  unsubS = db.watch('settings', l => { const m = (l || []).find(x => x.id === 'main'); if (m && m.traffic >= 1 && m.traffic <= 3) window.BBC_TRAFFIC = m.traffic; });
   unsubL = db.watch('ledger', list => { LEDGER = list; if (S.tab === 'points' || S.status === 'searching') render(); }, ['driverPhone', ME.phone]);
   initMap(); if (ONLINE) startLocate();
   presence(); startHeartbeat(); retryPending(); render();

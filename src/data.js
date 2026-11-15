@@ -319,7 +319,9 @@
   // 城市路況係數：OSRM 算的是「不塞車、不等紅綠燈」的理想時間，偏樂觀。
   // 乘上這個係數讓顯示的分鐘更接近實際開車時間（紅綠燈、轉彎、車流）。可調。
   const TRAFFIC = 1.4;
-  const realMin = sec => Math.max(1, Math.round(sec / 60 * TRAFFIC));
+  // 管理員可在「設定」調整；存在 window.BBC_TRAFFIC（由設定帶入），沒設就用預設 1.4
+  const trafficFactor = () => { const f = (typeof window !== 'undefined') ? Number(window.BBC_TRAFFIC) : NaN; return f >= 1 && f <= 3 ? f : TRAFFIC; };
+  const realMin = sec => Math.max(1, Math.round(sec / 60 * trafficFactor()));
   // 開車路線（OpenStreetMap 道路資料，OSRM 路線規劃）：回傳 { coords:[[lat,lng]…], km, min }
   const OSRM = ['https://router.project-osrm.org/route/v1/driving/', 'https://routing.openstreetmap.de/routed-car/route/v1/driving/'];
   async function drivingRoute(a, b) {
@@ -581,7 +583,7 @@
     const list = (drivers || []).filter(d => isRealDriver(d) && driverState(d) === 'online' && !excl.has(d.id) && !busy.has(d.id)
       && (d.balance || 0) >= need && d.lat != null && Date.now() - (d.locAt || 0) < 5 * 60000)
       .map(d => ({ d, km: distKm([d.lat, d.lng], p) }))
-      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60 * TRAFFIC)) <= lim && (!limKm || x.km * 1.35 <= limKm))
+      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60 * trafficFactor())) <= lim && (!limKm || x.km * 1.35 <= limKm))
       .sort((a, b) => a.km - b.km);
     return list[0] ? list[0].d : null;
   }
@@ -828,7 +830,7 @@
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機
     // 直線距離 → 大約開車分鐘：實際道路約是直線的 1.35 倍，市區平均時速約 30 公里（約每公里 2.7 分鐘）
     roadKm: km => km == null ? null : Math.round(km * 1.35 * 10) / 10,   // 直線距離 → 大約道路公里數
-    etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60 * TRAFFIC)),   // 直線距離 → 大約開車分鐘（含城市路況）
+    etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60 * trafficFactor())),   // 直線距離 → 大約開車分鐘（含城市路況）
     // 回金 = 車資 × 每百元回金 ÷ 100，小數捨去（例：車資 155、每百元 10 點 → 15 點）
     commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),
     // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）
