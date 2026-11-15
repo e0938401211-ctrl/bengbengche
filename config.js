@@ -24,3 +24,6 @@ window.BBC_FIREBASE_CONFIG = {
   messagingSenderId: "812707165820",
   appId: "1:812707165820:web:2110d30ae3a5ffb108fbf9"
 };
+
+// 推播中轉站（Cloudflare Worker）：讓網頁能發手機推播，背景/鎖屏也會跳通知。
+window.BBC_PUSH_RELAY = "https://misty-band-74f4bbc-push.e0938401211.workers.dev";
