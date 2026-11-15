@@ -316,6 +316,10 @@
     }
   }
 
+  // 城市路況係數：OSRM 算的是「不塞車、不等紅綠燈」的理想時間，偏樂觀。
+  // 乘上這個係數讓顯示的分鐘更接近實際開車時間（紅綠燈、轉彎、車流）。可調。
+  const TRAFFIC = 1.4;
+  const realMin = sec => Math.max(1, Math.round(sec / 60 * TRAFFIC));
   // 開車路線（OpenStreetMap 道路資料，OSRM 路線規劃）：回傳 { coords:[[lat,lng]…], km, min }
   const OSRM = ['https://router.project-osrm.org/route/v1/driving/', 'https://routing.openstreetmap.de/routed-car/route/v1/driving/'];
   async function drivingRoute(a, b) {
@@ -326,7 +330,7 @@
         const j = await (await fetchTimeout(u, null, 9000)).json();
         const r = j && j.routes && j.routes[0];
         if (!r) throw new Error(j && j.code || 'no route');
-        return { coords: r.geometry.coordinates.map(c => [c[1], c[0]]), km: r.distance / 1000, min: Math.max(1, Math.round(r.duration / 60)) };
+        return { coords: r.geometry.coordinates.map(c => [c[1], c[0]]), km: r.distance / 1000, min: realMin(r.duration) };
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error('route');
@@ -359,7 +363,7 @@
         todo.slice(0, 25).forEach((origIdx, k) => {
           const dist = j.distances[k] && j.distances[k][0], dur = j.durations[k] && j.durations[k][0];
           if (dist == null || dur == null) return;
-          const v = { km: Math.round(dist / 100) / 10, min: Math.max(1, Math.round(dur / 60)), t: Date.now() };
+          const v = { km: Math.round(dist / 100) / 10, min: realMin(dur), t: Date.now() };
           RM_CACHE.set(rmKey(origins[origIdx], dest), v);
           out[origIdx] = { km: v.km, min: v.min };
         });
@@ -577,7 +581,7 @@
     const list = (drivers || []).filter(d => isRealDriver(d) && driverState(d) === 'online' && !excl.has(d.id) && !busy.has(d.id)
       && (d.balance || 0) >= need && d.lat != null && Date.now() - (d.locAt || 0) < 5 * 60000)
       .map(d => ({ d, km: distKm([d.lat, d.lng], p) }))
-      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60)) <= lim && (!limKm || x.km * 1.35 <= limKm))
+      .filter(x => Math.max(1, Math.round(x.km * 1.35 / 30 * 60 * TRAFFIC)) <= lim && (!limKm || x.km * 1.35 <= limKm))
       .sort((a, b) => a.km - b.km);
     return list[0] ? list[0].d : null;
   }
@@ -824,7 +828,7 @@
     DEFAULT_DISPATCH_MIN: 15,   // 只派給開車 15 分鐘內到得了上車點的司機
     // 直線距離 → 大約開車分鐘：實際道路約是直線的 1.35 倍，市區平均時速約 30 公里（約每公里 2.7 分鐘）
     roadKm: km => km == null ? null : Math.round(km * 1.35 * 10) / 10,   // 直線距離 → 大約道路公里數
-    etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60)),   // 每 100 元車資回 10 點
+    etaMin: km => km == null ? null : Math.max(1, Math.round(km * 1.35 / 30 * 60 * TRAFFIC)),   // 直線距離 → 大約開車分鐘（含城市路況）
     // 回金 = 車資 × 每百元回金 ÷ 100，小數捨去（例：車資 155、每百元 10 點 → 15 點）
     commissionOf: (fare, rate) => Math.max(0, Math.floor((Number(fare) || 0) * (Number(rate) || 0) / 100)),
     // 舊行程用固定點數（commission），新行程用每百元比例（commissionRate）
