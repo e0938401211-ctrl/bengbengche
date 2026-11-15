@@ -376,6 +376,34 @@
     const msgs = tokens.map(to => ({ to, title, body, sound: 'default', priority: 'high', channelId: 'rides', data: data || {} }));
     try { await fetchTimeout('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(msgs) }, 8000); } catch (e) { console.warn('push', e); }
   }
+  // 診斷用：送一通推播，並抓 Expo 的 ticket 與 receipt，回傳可讀的結果字串（找出送不到的原因）
+  async function pushDiag(token) {
+    const H = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+    let resp;
+    try {
+      const r = await fetchTimeout('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: H, body: JSON.stringify([{ to: token, title: '🔔 測試推播', body: '這是一則測試通知，手機放背景或鎖屏也應該會跳', sound: 'default', priority: 'high', channelId: 'rides', data: { test: 1 } }]) }, 8000);
+      resp = await r.json();
+    } catch (e) { return '送出失敗（網路問題）：' + e; }
+    const ticket = resp && resp.data && resp.data[0];
+    if (resp && resp.errors && resp.errors.length) return '❌ Expo 直接拒收：' + JSON.stringify(resp.errors);
+    if (!ticket) return '沒有拿到 ticket，回應：' + JSON.stringify(resp).slice(0, 300);
+    if (ticket.status === 'error') return '❌ 送出就被拒：' + (ticket.message || '') + '\n細節：' + JSON.stringify(ticket.details || {});
+    const id = ticket.id;
+    // ticket OK，接著抓 receipt（可能要等幾秒）
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const rr = await fetchTimeout('https://exp.host/--/api/v2/push/getReceipts', { method: 'POST', headers: H, body: JSON.stringify({ ids: [id] }) }, 8000);
+        const jr = await rr.json();
+        const rec = jr && jr.data && jr.data[id];
+        if (rec) {
+          if (rec.status === 'ok') return '✅ Expo 回報「已送達 Apple（ok）」。\n如果手機還是沒跳，問題在手機端：請檢查 iPhone 設定→蹦蹦車→通知（橫幅/鎖定畫面要開），以及有沒有開「專注模式/勿擾」。';
+          return '❌ Apple 退回：' + (rec.message || '') + '\n錯誤碼：' + JSON.stringify((rec.details && rec.details.error) || rec.details || {});
+        }
+      } catch (e) {}
+    }
+    return '已送出（ticket=' + id + '），但 15 秒內還沒拿到回執。通常代表 Apple 端延遲，可以再按一次試試。';
+  }
 
   async function routeTrip(fromC, toC) {
     try { const r = await drivingRoute(fromC, toC); return { km: Math.round(r.km * 10) / 10, min: r.min }; } catch (e) { return null; }
@@ -785,7 +813,7 @@
   window.BBC = {
     VERSION: '2026.11.13-02',
     db, mode: db.mode, KHH, ALL_SPOTS, RATE,
-    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, roadMatrix, roadMatrixCached, routeTrip, sendPush, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
+    distKm, areaCenter, areaCenterAsync, TW, cityOf, distOf, fullArea, makeArea, twAreaFrom, inTW, locate, toText, hasDest, areaOf, geoSearch, geoReverse, reverseArea, hasLatin, zhFix, districtRoads, roadCoord, drivingRoute, roadMatrix, roadMatrixCached, routeTrip, sendPush, pushDiag, matchTrack, navUrl, fromCoord, toCoord, meterAmount, finalFare, estimateTrip,
     drawRoute, thinTrack, addTiles, pinIcon, tripSummaryHTML, clock, ROUTE_RED, hashPw, esc, fmt, ago, hhmm, startOfDay, driverState, isRealDriver, nextDriver, declineAndReassign, grabCandidates, grabRide, passRide, offerOpen, bestBid, grabDone, resolveGrab, GRAB_SECS, GRAB_KM, ACCEPT_SECS: 30, ONLINE_STALE_MS,
     LEDGER_TEXT: { topup: '儲值', commission: '行程回金', refund: '退還回金', deduct: '扣點', adjust: '調整' },
     DEFAULT_RATE: 10,

@@ -981,7 +981,7 @@ document.addEventListener('click', e => {
   const mg = t.closest('[data-msg]'); if (mg) return msgDialog(mg.dataset.msg, mg.dataset.msgride);
   const tg = t.closest('[data-toggle]'); if (tg) return toggleDriver(tg.dataset.toggle);
   const rp = t.closest('[data-resetpw]'); if (rp) return resetPwDialog(rp.dataset.resetpw);
-  const tp = t.closest('[data-testpush]'); if (tp) { const d = DRIVERS.find(x => x.id === tp.dataset.testpush); if (d && d.pushToken) { BBC.sendPush([d.pushToken], '🔔 測試推播', '這是一則測試通知，手機放背景或鎖屏也應該會跳出來', { test: 1 }); toast(`已送出測試推播給 ${d.name}。請看手機（背景/鎖屏）約 5 秒內是否跳出通知`); } else toast('這位司機還沒有推播碼，請先讓他在 App 允許通知'); return; }
+  const tp = t.closest('[data-testpush]'); if (tp) { const d = DRIVERS.find(x => x.id === tp.dataset.testpush); if (d && d.pushToken) { toast(`正在送測試推播給 ${d.name}，並向 Expo 查回執，請稍候約 5～15 秒…`); BBC.pushDiag(d.pushToken).then(msg => { try { window.alert(msg); } catch (e) { toast(msg); } }); } else toast('這位司機還沒有推播碼，請先讓他在 App 允許通知'); return; }
   const ap = t.closest('[data-approve]'); if (ap) return approveDriver(ap.dataset.approve);
   const dd = t.closest('[data-deldrv]'); if (dd) return deleteDriverDialog(dd.dataset.deldrv);
   const rt = t.closest('[data-route]'); if (rt) return routeDialog(rt.dataset.route);
