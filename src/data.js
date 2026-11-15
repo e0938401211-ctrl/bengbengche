@@ -369,19 +369,23 @@
     return out;   // 查不到就維持 null，由呼叫端用估算值
   }
   // 整趟（上車→下車）的真實道路距離與時間；查不到回傳 null，由呼叫端用估算值
+  // 推播中轉站：瀏覽器不能直接呼叫 exp.host（被 CORS 擋），所以走自己的免費 Cloudflare Worker 中轉。
+  // 在 config.js 設 window.BBC_PUSH_RELAY = 'https://你的worker.workers.dev' 後，推播才送得出去。
+  const PUSH_BASE = ((typeof window !== 'undefined' && window.BBC_PUSH_RELAY) || 'https://exp.host/--/api/v2/push').replace(/\/+$/, '');
   // 手機推播：請 Expo/Apple 推播服務通知司機（背景、鎖屏也會響）。tokens 是司機存的推播代碼陣列。
   async function sendPush(tokens, title, body, data) {
     tokens = (tokens || []).filter(t => typeof t === 'string' && t.indexOf('ExponentPushToken') === 0);
     if (!tokens.length) return;
     const msgs = tokens.map(to => ({ to, title, body, sound: 'default', priority: 'high', channelId: 'rides', data: data || {} }));
-    try { await fetchTimeout('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(msgs) }, 8000); } catch (e) { console.warn('push', e); }
+    try { await fetchTimeout(PUSH_BASE + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(msgs) }, 8000); } catch (e) { console.warn('push', e); }
   }
   // 診斷用：送一通推播，並抓 Expo 的 ticket 與 receipt，回傳可讀的結果字串（找出送不到的原因）
   async function pushDiag(token) {
     const H = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
     let resp;
     try {
-      const r = await fetchTimeout('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: H, body: JSON.stringify([{ to: token, title: '🔔 測試推播', body: '這是一則測試通知，手機放背景或鎖屏也應該會跳', sound: 'default', priority: 'high', channelId: 'rides', data: { test: 1 } }]) }, 8000);
+      if (!(typeof window !== 'undefined' && window.BBC_PUSH_RELAY)) return '⚠️ 還沒設定推播中轉站。\n網頁不能直接發推播（被瀏覽器 CORS 擋），要先架一個免費中轉站，並在 config.js 填 BBC_PUSH_RELAY。請依我給的步驟架好 Cloudflare Worker。';
+      const r = await fetchTimeout(PUSH_BASE + '/send', { method: 'POST', headers: H, body: JSON.stringify([{ to: token, title: '🔔 測試推播', body: '這是一則測試通知，手機放背景或鎖屏也應該會跳', sound: 'default', priority: 'high', channelId: 'rides', data: { test: 1 } }]) }, 8000);
       resp = await r.json();
     } catch (e) { return '送出失敗（網路問題）：' + e; }
     const ticket = resp && resp.data && resp.data[0];
@@ -393,7 +397,7 @@
     for (let i = 0; i < 5; i++) {
       await new Promise(r => setTimeout(r, 3000));
       try {
-        const rr = await fetchTimeout('https://exp.host/--/api/v2/push/getReceipts', { method: 'POST', headers: H, body: JSON.stringify({ ids: [id] }) }, 8000);
+        const rr = await fetchTimeout(PUSH_BASE + '/getReceipts', { method: 'POST', headers: H, body: JSON.stringify({ ids: [id] }) }, 8000);
         const jr = await rr.json();
         const rec = jr && jr.data && jr.data[id];
         if (rec) {
