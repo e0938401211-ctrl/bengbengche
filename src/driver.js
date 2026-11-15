@@ -667,7 +667,7 @@ function pointsHTML() {
           <td style="${td}">${fmt(x.after)}</td>
           <td style="${td};font-size:13px;overflow-wrap:anywhere">${esc(x.address || x.note || '—')}</td></tr>`).join('')}</tbody></table>`
         : '<p class="sub" style="padding:16px">還沒有點數紀錄。管理員幫你儲值後就會出現在這裡。</p>'}
-    </div>`;
+    </div>${pushStatusHTML()}`;
 }
 
 // ---------- 畫面 ----------
@@ -932,9 +932,31 @@ const unreadAdmin = () => myMsgs().filter(m => m.f === 'a' && m.at > ((ME && ME.
 let PENDING_PUSH_TOKEN = null;
 function savePushToken(tok) {
   if (!tok || typeof tok !== 'string') return;
+  try { window.__bbcPushToken = tok; } catch (e) {}
   if (!ME) { PENDING_PUSH_TOKEN = tok; return; }
   if (ME.pushToken === tok) return;
   ME.pushToken = tok; db.set('drivers', ME.phone, { pushToken: tok }).catch(() => {});
+  try { if (typeof render === 'function') render(); } catch (e) {}
+}
+// 推播診斷：讓司機自己看得到手機有沒有拿到推播授權與代碼
+function pushStatusHTML() {
+  let native = ''; try { native = window.__bbcPushToken || ''; } catch (e) {}
+  const saved = (ME && ME.pushToken) || '';
+  const tok = saved || native || PENDING_PUSH_TOKEN || '';
+  const ok = !!tok, done = ok && saved && saved === native;
+  const box = v => `<div style="margin-top:6px;font-size:11px;font-family:monospace;word-break:break-all;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:8px;color:var(--ink);user-select:all;-webkit-user-select:all">${esc(v)}</div>`;
+  let head, detail;
+  if (!ok) {
+    head = '<b style="color:#B3261E">❌ 手機還沒把推播代碼送進來</b>';
+    detail = '<div class="sub" style="font-size:12.5px;margin-top:4px">代表：這支 App 沒有推播功能、或你剛才沒有按「允許通知」。請到 iPhone「設定 → 蹦蹦車 → 通知」把「允許通知」打開，再把 App 完全關掉重開一次。</div>';
+  } else if (!saved) {
+    head = '<b style="color:#B8860B">⚠️ 已拿到推播代碼，但還沒存到你的帳號</b>';
+    detail = '<div class="sub" style="font-size:12.5px;margin-top:4px">通常是還沒登入。確定你已登入後，下拉重整一次這個畫面。</div>' + box(tok);
+  } else {
+    head = '<b style="color:#1F7A34">✅ 推播已就緒</b>' + (done ? '' : '<span class="sub" style="font-size:12px">（代碼已存）</span>');
+    detail = '<div class="sub" style="font-size:12.5px;margin-top:4px">請管理員到管理平台「司機」頁，按你名字旁的「測試推播」。手機放背景或鎖屏，約 5 秒內應該會跳通知。</div>' + box(tok);
+  }
+  return `<div class="panel" style="margin-top:14px;padding:14px"><div style="font-size:14px">🔔 背景通知狀態</div><div style="margin-top:6px">${head}</div>${detail}</div>`;
 }
 window.__bbcSetPushToken = savePushToken;
 try { if (window.__bbcPushToken) savePushToken(window.__bbcPushToken); } catch (e) {}
